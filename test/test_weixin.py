@@ -518,6 +518,8 @@ def test_poll_loop_backs_off_on_ret_keyed_session_expiry(tmp_path, monkeypatch):
     """
     t, client, _ = _make(tmp_path)
     sleeps: list[float] = []
+    states = []
+    t.on_state_change = lambda connected, error: states.append((connected, error))
 
     async def fake_sleep(d):
         sleeps.append(d)
@@ -531,6 +533,7 @@ def test_poll_loop_backs_off_on_ret_keyed_session_expiry(tmp_path, monkeypatch):
     t._running = True
     asyncio.run(t._poll_loop())
     assert sleeps == [600]  # the long session-expiry pause, not a spin
+    assert states == [(False, "Session expired (-14); sign in again")]
 
 
 def test_poll_loop_backs_off_on_ret_keyed_rate_limit(tmp_path, monkeypatch):

@@ -2,6 +2,18 @@
 
 ## Overview
 
+Weixin configuration and QR-start endpoints accept an optional `account` query
+parameter (`default` when omitted). Named binding keys are validated before any
+login request. QR sessions retain their selected key server-side so polling cannot
+retarget a login. Confirmation atomically updates the protected token bundle and
+the selected config entry, restoring the old credential if config publication
+fails. After successful publication, the gateway also replaces its cached process
+credential so a channel reconnect or exec restart cannot load the invalidated old
+token. Docker's explicit credential-scrub flag suppresses process propagation.
+Named bindings enroll the scanning user when the allow-list is empty and
+always require an allow-list. Remote sessions remain read-only. Settings expose
+an account selector, an add-binding flow and per-binding status without secrets.
+
 This module covers self-learning from corrections, scheduled cron jobs, and the web dashboard.
 Member roster and rules validation reuse one off-loop configuration snapshot
 for stable slug resolution and collision checks; per-member lookups do not reload

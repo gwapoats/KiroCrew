@@ -6034,6 +6034,26 @@ class TelegramConfig:
 
 
 @dataclass
+class WeixinAccountConfig:
+    """A named iLink binding; credentials stay in the protected credential store."""
+
+    enabled: bool = field(
+        default=True, metadata=_meta("Enabled", "Serve this named WeChat binding.")
+    )
+    account_id: str = field(
+        default="", metadata=_meta("Account ID", "Bot account id captured during QR sign-in.")
+    )
+    base_url: str = field(
+        default="https://ilinkai.weixin.qq.com",
+        metadata=_meta("iLink Base URL", "Per-account API endpoint returned by QR sign-in."),
+    )
+    allowed_user_ids: list[str] = field(
+        default_factory=list,
+        metadata=_meta("Allowed User IDs", "Permitted senders; an empty list denies everyone."),
+    )
+
+
+@dataclass
 class WeixinConfig:
     """Weixin (personal WeChat) channel via Tencent's iLink Bot API.
 
@@ -6051,6 +6071,14 @@ class WeixinConfig:
             "Requires a bot token + account id from the Settings QR flow.",
             tags=["weixin"],
         ),
+    )
+    default_enabled: bool = field(
+        default=True,
+        metadata=_meta("Default account enabled", "Serve the original WeChat binding."),
+    )
+    accounts: dict[str, WeixinAccountConfig] = field(
+        default_factory=dict,
+        metadata=_meta("Additional accounts", "Named WeChat bindings with separate allow-lists."),
     )
     token: str = field(
         default="",

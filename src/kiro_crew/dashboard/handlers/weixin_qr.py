@@ -53,6 +53,7 @@ from kiro_crew.dashboard.channel_folders import (
 from kiro_crew.dashboard.handlers.agents import _get_config_lock
 from kiro_crew.dashboard.handlers.core import _hot_apply_after_write
 from kiro_crew.dashboard.handlers.messaging import is_direct_local_request
+from kiro_crew.weixin.accounts import account_section, decode_tokens, merge_token, valid_account_key
 from kiro_crew.weixin.client import ILINK_BASE_URL, WeixinClient
 
 logger = logging.getLogger(__name__)
@@ -176,7 +177,9 @@ def _delete_env_key(key: str) -> None:
     _atomic_write(ep, env_bom_prefix(ep) + "\n".join(kept) + "\n", secret=True)
 
 
-def _commit_credential_and_config(cp: Path, serialized: str, token: str) -> None:
+def _commit_credential_and_config(
+    cp: Path, serialized: str, token: str, *, binding_key: str = "default"
+) -> str:
     """Write the credential then the config, rolling the credential back on failure.
 
     These are two separate files, so the pair cannot be replaced atomically.
@@ -212,7 +215,9 @@ def _commit_credential_and_config(cp: Path, serialized: str, token: str) -> None
                 "once the other operation finishes."
             )
         prior = _read_env_value(CRED_WEIXIN_TOKEN)
-        _write_env_secret(CRED_WEIXIN_TOKEN, token)
+        legacy = json.loads(serialized).get("weixin", {}).get("token", "")
+        updated = merge_token(prior or legacy, binding_key, token)
+        _write_env_secret(CRED_WEIXIN_TOKEN, updated)
         try:
             _atomic_write(cp, serialized)
         except BaseException:
@@ -230,12 +235,15 @@ def _commit_credential_and_config(cp: Path, serialized: str, token: str) -> None
                     exc_info=True,
                 )
             raise
+        return updated
     finally:
         platform_compat.release_lock(lock_fd)
         os.close(lock_fd)
 
 
-def _stage_weixin_config(*, account_id: str, base_url: str) -> tuple[Path, str]:
+def _stage_weixin_config(
+    *, account_id: str, base_url: str, binding_key: str = "default", user_id: str = ""
+) -> tuple[Path, str]:
     """Parse config.json and return ``(path, serialized)`` with the weixin patch.
 
     Parsing/serializing is separated from writing so the caller can validate the
@@ -256,10 +264,28 @@ def _stage_weixin_config(*, account_id: str, base_url: str) -> tuple[Path, str]:
     weixin = data.get("weixin")
     if not isinstance(weixin, dict):
         weixin = {}
+    accounts = weixin.get("accounts", {})
+    if not isinstance(accounts, dict):
+        raise ValueError("Invalid WeChat accounts configuration")
+    other_ids = [a.get("account_id") for k, a in accounts.items()
+                 if k != binding_key and isinstance(a, dict)]
+    if binding_key != "default":
+        other_ids.append(weixin.get("account_id"))
+    if account_id in other_ids:
+        raise ValueError("This bot is already bound to another account slot")
     weixin["enabled"] = True
-    weixin["account_id"] = account_id
+    target = weixin
+    if binding_key != "default":
+        target = accounts.setdefault(binding_key, {})
+        weixin["accounts"] = accounts
+        target["enabled"] = True
+        if user_id and not target.get("allowed_user_ids"):
+            target["allowed_user_ids"] = [user_id]
+    else:
+        weixin["default_enabled"] = True
+    target["account_id"] = account_id
     if base_url:
-        weixin["base_url"] = base_url
+        target["base_url"] = base_url
     data["weixin"] = weixin
     return cp, json.dumps(data, ensure_ascii=False, indent=2)
 
@@ -276,6 +302,9 @@ async def weixin_qr_start(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "read-only from remote sessions (local machine only)"}, status=403
         )
+    binding_key = request.query.get("account", "default")
+    if not valid_account_key(binding_key):
+        return web.json_response({"error": "invalid_account_key"}, status=400)
     _prune_sessions()
     client = WeixinClient(token="", base_url=ILINK_BASE_URL)
     try:
@@ -306,7 +335,10 @@ async def weixin_qr_start(request: web.Request) -> web.Response:
         return web.json_response({"error": "qr_render_failed"}, status=500)
 
     session_id = uuid.uuid4().hex
-    _SESSIONS[session_id] = {"client": client, "qrcode": qrcode_token, "created_at": time.time()}
+    _SESSIONS[session_id] = {
+        "client": client, "qrcode": qrcode_token, "created_at": time.time(),
+        "binding_key": binding_key,
+    }
     return web.json_response({"session_id": session_id, "qrcode_img_content": img_data_uri})
 
 
@@ -348,12 +380,16 @@ async def weixin_qr_status(request: web.Request) -> web.Response:
         _SESSIONS.pop(session_id, None)
         return web.json_response({"error": "confirmed_without_credentials"}, status=502)
 
-    def _persist() -> None:
+    def _persist() -> str:
         # Parse + stage the config FIRST: if config.json is corrupt we must fail
         # before touching the credential, otherwise a re-login would replace a
         # working token and then abort, losing it.
-        cp, serialized = _stage_weixin_config(account_id=account_id, base_url=base_url)
-        _commit_credential_and_config(cp, serialized, token)
+        binding_key = sess.get("binding_key", "default")
+        cp, serialized = _stage_weixin_config(
+            account_id=account_id, base_url=base_url, binding_key=binding_key,
+            user_id=str(resp.get("ilink_user_id") or ""),
+        )
+        return _commit_credential_and_config(cp, serialized, token, binding_key=binding_key)
 
     try:
         # Both writes touch shared stores (.env + config.json) that other config
@@ -364,7 +400,12 @@ async def weixin_qr_status(request: web.Request) -> web.Response:
         # The whole block runs OFF the loop: the file I/O plus, on Windows,
         # the owner-only DACL restrict_to_owner() applies.
         async with _get_config_lock():
-            await asyncio.to_thread(_persist)
+            updated = await asyncio.to_thread(_persist)
+            # load_credentials propagates into os.environ, which then takes
+            # precedence over disk on reconnect and survives an exec restart.
+            # Publish only after both writes succeed, preserving Docker's scrub.
+            if not os.environ.get("_KIROCREW_CREDS_SCRUBBED"):
+                os.environ[CRED_WEIXIN_TOKEN] = updated
     except Exception as exc:
         # A corrupt config.json or an un-restrictable credential file must NOT be
         # reported as a successful sign-in.
@@ -391,19 +432,37 @@ def setup_weixin_routes(app: web.Application) -> None:
 async def weixin_config_get(request: web.Request) -> web.Response:
     """GET /api/weixin/config — status + policy. Never returns the credential."""
 
-    def _load() -> tuple[Any, bool]:
+    def _load() -> tuple[Any, dict[str, str]]:
         cfg = KiroCrewConfig.load()
         creds = cfg.load_credentials()
-        return cfg.weixin, bool(creds.get(CRED_WEIXIN_TOKEN, "") or cfg.weixin.token)
+        return cfg.weixin, decode_tokens(creds.get(CRED_WEIXIN_TOKEN, "") or cfg.weixin.token)
 
     # Off-loop: both config.json and the .env credential store are read from disk.
-    wx, has_cred = await asyncio.to_thread(_load)
+    wx, tokens = await asyncio.to_thread(_load)
+    root = wx
+    binding_key = request.query.get("account", "default")
+    if not valid_account_key(binding_key):
+        return web.json_response({"error": "invalid_account_key"}, status=400)
+    wx = account_section(root, binding_key)
+    has_cred = bool(tokens.get(binding_key))
     state = request.app.get("state")
+    get_transport = getattr(state, "get_channel_transport", None)
+    transport = get_transport("weixin") if get_transport is not None else None
+    statuses = getattr(transport, "statuses", {})
+    selected_status = statuses.get(binding_key, {})
+    if not root.accounts and binding_key == "default":
+        selected_status = {
+            "connected": bool(getattr(state, "weixin_connected", False)),
+            "connect_error": str(getattr(state, "weixin_connect_error", ""))[:120],
+        }
     return web.json_response(
         {
             # True only when the long-poll transport actually started this session.
-            "connected": bool(getattr(state, "weixin_connected", False)),
-            "connect_error": str(getattr(state, "weixin_connect_error", ""))[:120],
+            "connected": bool(selected_status.get("connected", False)),
+            "connect_error": str(selected_status.get("connect_error", "")),
+            "binding_key": binding_key,
+            "accounts": ["default", *root.accounts],
+            "channel_enabled": root.enabled,
             "configured": bool(has_cred and wx.account_id and wx.enabled),
             "read_only": not is_direct_local_request(request),
             # Presence only — the credential itself is never serialized.
@@ -440,6 +499,8 @@ async def weixin_config_save(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid dm_policy"}, status=400)
     if "allowed_user_ids" in body and not isinstance(body["allowed_user_ids"], list):
         return web.json_response({"error": "allowed_user_ids must be a list"}, status=400)
+    if "channel_enabled" in body and not isinstance(body["channel_enabled"], bool):
+        return web.json_response({"error": "channel_enabled must be a boolean"}, status=400)
     if "session_folder" in body:
         try:
             session_folder = clean_session_folder(body["session_folder"])
@@ -448,6 +509,13 @@ async def weixin_config_save(request: web.Request) -> web.Response:
                 {"error": str(exc), "code": "invalid_session_folder"}, status=400
             )
 
+    binding_key = request.query.get("account", "default")
+    if not valid_account_key(binding_key):
+        return web.json_response({"error": "invalid_account_key"}, status=400)
+    if binding_key != "default" and body.get("dm_policy", "allowlist") != "allowlist":
+        return web.json_response({"error": "Named accounts require an allow-list"}, status=400)
+    if binding_key != "default" and "session_folder" in body:
+        return web.json_response({"error": "Session folder is shared by the WeChat channel"}, status=400)
     async with _get_config_lock():
         cp = config_path()
 
@@ -466,8 +534,20 @@ async def weixin_config_save(request: web.Request) -> web.Response:
         if not isinstance(data.get("weixin"), dict):
             data["weixin"] = {}
         wx = data["weixin"]
+        if "channel_enabled" in body:
+            wx["enabled"] = body["channel_enabled"]
+        if binding_key != "default":
+            accounts = wx.get("accounts", {})
+            if binding_key not in accounts:
+                return web.json_response({"error": "Sign in to this account first"}, status=404)
+            wx = accounts[binding_key]
+        elif "enabled" in body:
+            wx["default_enabled"] = bool(body["enabled"])
+            if not wx.get("accounts"):
+                wx["enabled"] = bool(body["enabled"])
         if "enabled" in body:
-            wx["enabled"] = bool(body["enabled"])
+            if binding_key != "default":
+                wx["enabled"] = bool(body["enabled"])
         if "dm_policy" in body:
             wx["dm_policy"] = str(body["dm_policy"])
         if "allowed_user_ids" in body:
@@ -501,6 +581,7 @@ async def weixin_config_save(request: web.Request) -> web.Response:
     return web.json_response(
         {
             "ok": True,
-            "restart_required": channel_restart_required("weixin", body.keys()),
+            "restart_required": (binding_key != "default" or "channel_enabled" in body
+                                 or channel_restart_required("weixin", body.keys())),
         }
     )

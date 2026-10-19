@@ -14007,13 +14007,20 @@ class GatewayOrchestrator:
         # Weixin (iLink personal WeChat) — the WEIXIN_TOKEN credential (env/.env)
         # overrides cfg.weixin.token. token + account_id come from the Settings
         # QR flow; deny-by-default DM policy from the typed cfg.weixin dataclass.
-        self._weixin_token = creds.get(CRED_WEIXIN_TOKEN, "") or cfg.weixin.token
+        from kiro_crew.weixin.accounts import decode_tokens
+
+        self._weixin_tokens = decode_tokens(creds.get(CRED_WEIXIN_TOKEN, "") or cfg.weixin.token)
+        self._weixin_token = self._weixin_tokens.get("default", "")
         self._weixin_account_id: str = cfg.weixin.account_id
         self._weixin_base_url: str = cfg.weixin.base_url
         self._weixin_dm_policy: str = cfg.weixin.dm_policy
         self._weixin_allowed_user_ids: list[str] = list(cfg.weixin.allowed_user_ids)
         self._weixin_enabled = bool(
-            cfg.weixin.enabled and self._weixin_token and self._weixin_account_id
+            cfg.weixin.enabled and (
+                (cfg.weixin.default_enabled and self._weixin_token and self._weixin_account_id)
+                or any(a.enabled and a.account_id and self._weixin_tokens.get(k)
+                       for k, a in cfg.weixin.accounts.items())
+            )
         )
         self._weixin_client: "WeixinClient | None" = None
 

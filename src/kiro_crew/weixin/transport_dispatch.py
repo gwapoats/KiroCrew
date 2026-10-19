@@ -138,11 +138,14 @@ class WeixinDispatcher:
         agent: str | None = None,
         conv_log: "ConversationLog | None" = None,
         approval_mode: str = APPROVAL_INTERACTIVE,
+        account_key: str = "default",
     ) -> None:
         self.sessions = sessions
         self.ctx_builder = ctx_builder
         self.cfg = cfg
         self.account_id = account_id
+        self.account_key = account_key
+        self.dashboard_state: Any = None
         self.ctx_store = ctx_store
         self.typing_cache = typing_cache
         self.agent = agent
@@ -371,7 +374,7 @@ class WeixinDispatcher:
             daily_reset_hour=messaging.daily_reset_hour,
         )
         session_key = self._session_key(user_id)
-        conversation_id = f"weixin:{user_id}"
+        conversation_id = f"weixin:{self._scoped_user(user_id)}"
         agent = self._resolve_agent()
 
         renderer = WeixinRenderer(
@@ -435,7 +438,7 @@ class WeixinDispatcher:
                 ),
                 after_persist=self._surface_own_session,
                 notice=lambda sk, provider: self._maybe_notice(user_id, sk, provider),
-                audit_caller=f"weixin:{user_id}",
+                audit_caller=f"weixin:{self._scoped_user(user_id)}",
             ),
             sessions=self.sessions,
             ctx_builder=self.ctx_builder,
@@ -588,9 +591,9 @@ class WeixinDispatcher:
         return build_dm_session_key(
             "weixin",
             self._resolve_agent(),
-            user_id,
+            self._scoped_user(user_id),
             gen=gen,
-            dm_scope=str(self.cfg.messaging.dm_scope),
+            dm_scope=self._dm_scope(),
         )
 
     def _seed_gen(self, user_id: str) -> int:
@@ -598,9 +601,19 @@ class WeixinDispatcher:
             self.sessions,
             channel="weixin",
             agent=self._resolve_agent(),
-            user_id=user_id,
-            dm_scope=str(self.cfg.messaging.dm_scope),
+            user_id=self._scoped_user(user_id),
+            dm_scope=self._dm_scope(),
         )
+
+    def _scoped_user(self, user_id: str) -> str:
+        from kiro_crew.weixin.accounts import route_id
+
+        return route_id(self.account_key, user_id)
+
+    def _dm_scope(self) -> str:
+        # Named bindings must not collapse into the operator's unified bucket.
+        return (str(self.cfg.messaging.dm_scope) if self.account_key == "default"
+                else "per-channel-peer")
 
     def _persist_turn(
         self,

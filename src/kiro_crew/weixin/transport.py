@@ -106,8 +106,10 @@ class WeixinTransport(MessagingTransport):
         allowed_user_ids: Iterable[str] = (),
         dm_policy: str = "allowlist",
         dispatch: DispatchFn | None = None,
+        account_key: str = "default",
     ) -> None:
         self._client = client
+        self._account_key = account_key
         self._account_id = account_id
         self._ctx = ctx_store
         self._allowed: frozenset[str] = frozenset(str(u) for u in allowed_user_ids)
@@ -144,6 +146,15 @@ class WeixinTransport(MessagingTransport):
         Both fields are authorization boundaries, so each change is SEL-audited
         by count and by policy NAME -- never by id.
         """
+        from kiro_crew.config.sections import WeixinConfig
+        from kiro_crew.weixin.accounts import account_section
+
+        if isinstance(section, WeixinConfig):
+            section = account_section(section, self._account_key)
+        if not getattr(section, "enabled", True):
+            self._dm_policy = "disabled"
+            self._allowed = frozenset()
+            return
         raw_ids = getattr(section, "allowed_user_ids", None)
         if not isinstance(raw_ids, (list, tuple)):
             logger.warning(
@@ -257,6 +268,9 @@ class WeixinTransport(MessagingTransport):
         await asyncio.to_thread(self._ctx.restore, self._account_id)
         self._running = True
         self._poll_task = asyncio.create_task(self._poll_loop())
+        # The registry closes client handles when replacing a channel. Give
+        # that close path ownership of the poller, not just the HTTP session.
+        self._client._poll_task = self._poll_task
 
     async def disconnect(self) -> None:
         self._running = False
@@ -322,8 +336,11 @@ class WeixinTransport(MessagingTransport):
                 errcode = protocol_error_code(resp)
                 if errcode == SESSION_EXPIRED_ERRCODE:
                     logger.warning(
-                        "weixin: session expired (-14); pausing — re-login via Settings QR."
+                        "weixin: account=%s session expired (-14); pausing — re-login via Settings QR.",
+                        self._account_key,
                     )
+                    if self.on_state_change is not None:
+                        self.on_state_change(False, "Session expired (-14); sign in again")
                     await asyncio.sleep(600)
                     continue
                 if errcode == RATE_LIMIT_ERRCODE:
@@ -394,6 +411,7 @@ class WeixinTransport(MessagingTransport):
                 operation="weixin_transport.authorize",
                 outcome="denied",
                 source="weixin",
+                resources=f"account={self._account_key}",
             )
         return allowed
 
@@ -441,7 +459,8 @@ class WeixinTransport(MessagingTransport):
         msg = InboundMessage(
             channel_type="weixin",
             user_id=from_user,
-            conversation_id=from_user,  # DM: peer id is the conversation
+            conversation_id=(from_user if self._account_key == "default"
+                             else f"{self._account_key}/{from_user}"),
             text=text,
             attachments=media_items,
         )

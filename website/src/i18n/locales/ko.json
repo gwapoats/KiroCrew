@@ -1,4 +1,12 @@
 {
+  "familyWeixin": {
+    "account": "WeChat 계정",
+    "new_account": "새 계정 식별자",
+    "key_hint": "소문자, 숫자, _, -를 사용하세요. 예: family1.",
+    "add": "계정 추가",
+    "shared_warning": "대화 기록은 분리됩니다. 별도 제한 없이는 파일, 도구 및 전역 메모리가 공유됩니다.",
+    "all_enabled": "모든 WeChat 계정 활성화"
+  },
   "commandCenter": {
     "automatic_cards": "모든 세션의 카드 자동 생성",
     "card_limits": "기본값은 꺼짐입니다. 백그라운드 모델이 한 번에 하나의 호출을 처리합니다. 세션당 {{minutes}}분에 한 번, 모든 세션을 합쳐 시간당 {{hourly}}회까지 시도하며 실패한 시도도 포함됩니다. 실시간 상태와 결정에는 모델을 사용하지 않습니다.",

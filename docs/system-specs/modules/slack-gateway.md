@@ -1221,6 +1221,16 @@ discards must not pin itself into the registry. See
 
 ### The hoist is one function per channel
 
+The Weixin hoist decodes either the legacy token or a versioned token bundle.
+With named accounts configured, its factory starts a child connection for each
+enabled, credentialed binding and registers a single routing transport. The
+returned handle closes all child connections on shutdown or channel restart.
+The single-account client handle also owns its transport's poll task, so replacing
+that handle cancels and joins the poller before closing HTTP resources. A closed
+client must not leave a background loop retrying against a closed session.
+A connection failure is isolated and reported per binding; an active duplicate
+bot id is refused to avoid polling the same credential twice.
+
 Boot reads each channel's enable flag, credentials and options out of the config
 and onto the orchestrator (`_wecom_enabled`, `_telegram_bot_token`, and so on)
 before `_start_channel_transports` runs. That work is one

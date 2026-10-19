@@ -11,6 +11,8 @@ import { TagListEditor } from './SlackPanel'
 import { i18nT } from '../../i18n/t'
 import { ChannelFolderBackfill } from './ChannelFolderBackfill'
 import { useImeGuard } from '../../hooks/useImeGuard'
+import { Btn } from '../../components/ui'
+import { useTranslation } from 'react-i18next'
 /** Brand name — do-not-translate, so it lives here rather than in the catalog. */
 const CHANNEL_NAME = "WeChat"
 const SETUP_GUIDE =
@@ -39,11 +41,45 @@ type Phase = 'idle' | 'starting' | 'waiting' | 'scanned' | 'confirmed' | 'expire
  * the bot credential itself.
  */
 export function WeixinPanel() {
+  const { t } = useTranslation()
+  const qc = useQueryClient()
+  const [account, setAccount] = useState('default')
+  const [draft, setDraft] = useState('')
+  const [loginActive, setLoginActive] = useState(false)
+  const { data } = useQuery({ queryKey: ['weixin-config', 'default'], queryFn: () => api.getWeixinConfig() })
+  const globalSave = useMutation({
+    mutationFn: (enabled: boolean) => api.saveWeixinConfig({ channel_enabled: enabled }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['weixin-config'] }) },
+  })
+  const accounts = Array.from(new Set([...(data?.accounts || ['default']), account]))
+  return <div className="flex flex-col gap-5">
+    {(data?.accounts?.length || 0) > 1 && <SettingsToggle
+      label={t('familyWeixin.all_enabled')} configKey="weixin.enabled"
+      checked={!!data?.channel_enabled} disabled={data?.read_only || globalSave.isPending}
+      onChange={v => globalSave.mutate(v)} />}
+    {/* No hand-off: the new-account key may be an unsaved draft. */}
+    <ErrorNotice message={globalSave.error instanceof Error ? globalSave.error.message : ''} />
+    <SettingsSelect label={t('familyWeixin.account')} options={accounts}
+      value={account} onChange={setAccount} disabled={loginActive} />
+    {data && !data.read_only && <div className="flex flex-col gap-2 max-w-[380px]">
+      <SettingsInput label={t('familyWeixin.new_account')} value={draft}
+        onChange={setDraft} description={t('familyWeixin.key_hint')} />
+      <Btn disabled={loginActive || !/^[a-z][a-z0-9_-]{0,31}$/.test(draft) || accounts.includes(draft)}
+        onClick={() => { setAccount(draft); setDraft('') }}>{t('familyWeixin.add')}</Btn>
+    </div>}
+    <p className="text-[12px] text-muted m-0">{t('familyWeixin.shared_warning')}</p>
+    <WeixinAccountPanel key={account} accountKey={account} onLoginActive={setLoginActive} />
+  </div>
+}
+
+function WeixinAccountPanel({ accountKey, onLoginActive }: {
+  accountKey: string; onLoginActive: (active: boolean) => void
+}) {
   const ime = useImeGuard()
   const qc = useQueryClient()
   const { data, isError } = useQuery({
-    queryKey: ['weixin-config'],
-    queryFn: api.getWeixinConfig,
+    queryKey: ['weixin-config', accountKey],
+    queryFn: () => accountKey === 'default' ? api.getWeixinConfig() : api.getWeixinConfig(accountKey),
     retry: false,
   })
 
@@ -57,6 +93,7 @@ export function WeixinPanel() {
   // and stops as soon as the flow reaches a terminal phase, so there is no
   // hand-rolled timer to leak on unmount.
   const polling = phase === 'waiting' || phase === 'scanned'
+  useEffect(() => { onLoginActive(polling || phase === 'starting') }, [polling, phase, onLoginActive])
   // Counted here, not read from React Query's `failureCount`: with `retry: false`
   // that counter is reset at the start of EVERY `refetchInterval` fetch (each
   // fetch gets a fresh retry budget), so it never exceeds 1 and a gate on it
@@ -118,7 +155,7 @@ export function WeixinPanel() {
   const readOnly = !!data?.read_only
 
   const startLogin = useMutation({
-    mutationFn: () => api.weixinQrStart(),
+    mutationFn: () => accountKey === 'default' ? api.weixinQrStart() : api.weixinQrStart(accountKey),
     onMutate: () => {
       setErrMsg('')
       setQrPollFailures(0)
@@ -142,7 +179,8 @@ export function WeixinPanel() {
   })
 
   const saveConfig = useMutation({
-    mutationFn: (patch: Partial<WeixinConfigSave>) => api.saveWeixinConfig(patch),
+    mutationFn: (patch: Partial<WeixinConfigSave>) => accountKey === 'default'
+      ? api.saveWeixinConfig(patch) : api.saveWeixinConfig(patch, accountKey),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['weixin-config'] })
     },
@@ -237,6 +275,7 @@ export function WeixinPanel() {
       </div>
 
       {/* QR login */}
+      {!!data?.connect_error && <ErrorNotice message={data.connect_error} variant="inline" askAgent />}
       <div className="rounded-lg border border-border bg-card p-3.5">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
@@ -341,13 +380,14 @@ export function WeixinPanel() {
       <div data-testid="weixin-enabled" className="max-w-[380px]">
         <SettingsToggle
           label={i18nT('pages.settings.weixinPanel.enable_the_wechat_channel')}
+          configKey={accountKey === 'default' ? 'weixin.default_enabled' : 'weixin.accounts'}
           checked={!!data?.enabled}
           disabled={readOnly}
           onChange={v => save({ enabled: v })}
         />
       </div>
 
-      <div>
+      {accountKey === 'default' && <div>
         {/* maxWidth: the trigger is w-full and this field is a stretch flex item,
             so without a cap it would span the whole panel while every
             neighbouring control stays content-scaled. data-testid stays on this
@@ -367,7 +407,7 @@ export function WeixinPanel() {
             onChange={v => save({ dm_policy: v })}
           />
         </div>
-      </div>
+      </div>}
 
       {data?.dm_policy === 'allowlist' && (
         <div data-testid="weixin-allowlist">
@@ -381,6 +421,8 @@ export function WeixinPanel() {
           />
         </div>
       )}
+      {/* No hand-off: a rejected account setting should remain visible here. */}
+      {accountKey !== 'default' && <ErrorNotice message={saveError} variant="inline" />}
 
       {/* Optional session filing, rendered from the same primitives, in the same
           place, with the same divider as every other channel's copy of this
@@ -403,7 +445,7 @@ export function WeixinPanel() {
           button) pass neither. Renaming does not strand the folder it creates:
           the channel's folder is found by its stamp, so a new name relabels that
           same folder instead of building a second one. */}
-      <div className="border-t border-border mt-4 pt-4" data-testid="weixin-session-folder">
+      {accountKey === 'default' && <div className="border-t border-border mt-4 pt-4" data-testid="weixin-session-folder">
         <SettingsToggle
           label={i18nT('pages.settings.botChannelPanel.file_sessions_in_folder')}
           description={i18nT('pages.settings.botChannelPanel.file_sessions_in_folder_desc', { channel: CHANNEL_NAME })}
@@ -462,7 +504,7 @@ export function WeixinPanel() {
           message={saveError}
           testId="weixin-session-folder-error"
         />
-      </div>
+      </div>}
 
       <p className="text-[11.5px] text-muted m-0">
         {i18nT('pages.settings.weixinPanel.group_chats_are_not_supported_ilink_bot_identiti')}{' '}

@@ -33,6 +33,41 @@ beforeEach(() => {
   vi.spyOn(api, 'getWeixinConfig').mockResolvedValue({ ...CONFIG })
 })
 
+describe('WeixinPanel — additional bindings', () => {
+  it('starts QR login for a new account without replacing the default slot', async () => {
+    vi.spyOn(api, 'getWeixinConfig').mockImplementation(async account => ({
+      ...CONFIG, accounts: ['default'], binding_key: account || 'default',
+      credential_set: !account || account === 'default',
+    }))
+    const start = vi.spyOn(api, 'weixinQrStart').mockResolvedValue({
+      session_id: 'new-session', qrcode_img_content: 'data:image/png;base64,AA==',
+    })
+    vi.spyOn(api, 'weixinQrStatus').mockResolvedValue({ status: 'wait' })
+    renderWithProviders(<WeixinPanel />)
+    fireEvent.change(await screen.findByRole('textbox', { name: 'New account key' }), {
+      target: { value: 'family1' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Add account' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Connect via QR' }))
+    await waitFor(() => expect(start).toHaveBeenCalledWith('family1'))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'WeChat account' })).toBeDisabled())
+  })
+
+  it('saves the selected account allow-list without changing the default account', async () => {
+    vi.spyOn(api, 'getWeixinConfig').mockImplementation(async account => ({
+      ...CONFIG, accounts: ['default', 'family1'], binding_key: account || 'default',
+      dm_policy: 'allowlist', allowed_user_ids: ['family-user'],
+    }))
+    const save = vi.spyOn(api, 'saveWeixinConfig').mockResolvedValue({ ok: true, restart_required: true })
+    renderWithProviders(<WeixinPanel />)
+    fireEvent.click(await screen.findByRole('combobox', { name: 'WeChat account' }))
+    fireEvent.click(await screen.findByRole('option', { name: 'family1' }))
+    await waitFor(() => expect(api.getWeixinConfig).toHaveBeenCalledWith('family1'))
+    fireEvent.click(await screen.findByRole('switch', { name: 'Enable the WeChat channel' }))
+    await waitFor(() => expect(save).toHaveBeenCalledWith({ enabled: false }, 'family1'))
+  })
+})
+
 describe('WeixinPanel — DM policy picker', () => {
   it('labels the trigger from the field caption and shows the saved policy', async () => {
     renderWithProviders(<WeixinPanel />)

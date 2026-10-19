@@ -247,12 +247,18 @@ class WeixinClient:
         self.account_id = account_id
         self._session: Any = None  # aiohttp.ClientSession, created in connect()
         self._handler_tasks: set[asyncio.Task[Any]] = set()
+        self._poll_task: asyncio.Task[None] | None = None
 
     async def connect(self) -> None:
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession()
 
     async def close(self) -> None:
+        poll = self._poll_task
+        self._poll_task = None
+        if poll is not None and poll is not asyncio.current_task():
+            poll.cancel()
+            await asyncio.gather(poll, return_exceptions=True)
         if self._session is not None and not self._session.closed:
             await self._session.close()
 

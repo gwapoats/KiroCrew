@@ -2,6 +2,15 @@
 
 ## Overview
 
+Weixin supports an additive `accounts` map keyed by a lowercase connection key.
+Each entry has its own enable switch, bot account id, API base URL and sender
+allow-list. `default_enabled` controls the legacy binding independently of the
+channel-wide `enabled` switch. The protected `WEIXIN_TOKEN` credential remains a
+plain legacy token for a single binding; adding another binding converts it to a
+versioned JSON token bundle. No token is returned by the settings API or stored
+inside an additional account's config. Rollback to an unmodified installation
+requires restoring the pre-migration credential and config together.
+
 The config package loads runtime configuration from `~/.kiro/crew/config.json`
 using stdlib dataclasses with sensible defaults. `config/sections.py` and
 `config/loader.py` are the two facades callers import. Each composes the owner

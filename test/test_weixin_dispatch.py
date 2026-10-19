@@ -376,6 +376,40 @@ def test_dispatcher_drives_a_turn_and_replies(tmp_path):
     assert sessions.released == 1  # semaphore always released
 
 
+def test_named_bots_share_gateway_but_keep_reply_and_session_routes_separate(tmp_path):
+    from kiro_crew.weixin.transport import WeixinTransport
+
+    async def check():
+        sessions = FakeSessions()
+        clients = []
+        for key in ("family1", "family2"):
+            dispatcher, client, _ = _make(tmp_path)
+            dispatcher.account_key = key
+            dispatcher.account_id = f"bot-{key}"
+            dispatcher.sessions = sessions
+            transport = WeixinTransport(
+                client, account_id=dispatcher.account_id, account_key=key,
+                ctx_store=dispatcher.ctx_store, allowed_user_ids=["same-user"],
+                dispatch=dispatcher.handle_message,
+            )
+            dispatcher.transport = transport
+            await transport.receive({
+                "from_user_id": "same-user", "msg_id": "same-message-id",
+                "context_token": f"context-{key}",
+                "item_list": [{"type": 1, "text_item": {"text": "hello"}}],
+            })
+            clients.append(client)
+        assert len(sessions.channels) == 2
+        assert set(sessions.channels.values()) == {
+            "weixin:family1/same-user", "weixin:family2/same-user"
+        }
+        for key, client in zip(("family1", "family2"), clients):
+            assert len(client.sent) == 1
+            assert client.sent[0]["to"] == "same-user"
+            assert client.sent[0]["context_token"] == f"context-{key}"
+    asyncio.run(check())
+
+
 def test_dispatcher_sets_channel_id_for_a_new_session(tmp_path):
     d, _, sessions = _make(tmp_path)
     asyncio.run(d.handle_message(_msg(user="userB")))

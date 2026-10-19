@@ -2821,6 +2821,12 @@ for slash command UIs. Action IDs follow `mc_<command>_<action>[_<id>]`.
 
 ## DM Channel Session Keys & Mid-Turn Handling
 
+Named Weixin bindings place the connection key in the peer component
+(`family1/<user-id>`), including generation seeding, command handling and audit
+caller attribution. They never use unified scope. Existing default-binding keys
+remain unchanged. Separate transcripts do not isolate shared global memory or
+the host filesystem.
+
 DM channels have no thread concept, so every DM dispatcher (Discord, Feishu,
 iMessage, Teams, Telegram, Webex, WeCom, Weixin, WhatsApp) goes through `messaging/link.py`, which
 derives the session key with `build_dm_session_key(channel, agent, user, *,

@@ -21,6 +21,8 @@ schema/validation.
 
 from __future__ import annotations
 
+import re
+
 # Computer-use ceilings come from the feature's constants module rather than
 # being re-spelled here (docs/system-specs/common/code-style.md: no hardcoded
 # values in business logic); its defaults are the ComputerUseConfig fields'.
@@ -81,6 +83,7 @@ from kiro_crew.config.sections import (
     WakaTimeConfig,
     WebexConfig,
     WeComConfig,
+    WeixinAccountConfig,
     WeixinConfig,
     WhatsAppConfig,
     _coerce_int_ids,
@@ -591,7 +594,26 @@ def _build_telegram_config(telegram_data: dict) -> TelegramConfig:
 
 def _build_weixin_config(weixin_data: dict) -> WeixinConfig:
     section = SectionReader(WeixinConfig, weixin_data)
+    accounts = {}
+    raw = section.get("accounts")
+    if isinstance(raw, dict):
+        for key, value in raw.items():
+            if (
+                not isinstance(key, str)
+                or key == "default"
+                or not re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", key)
+                or not isinstance(value, dict)
+            ):
+                continue
+            accounts[key] = WeixinAccountConfig(
+                enabled=_safe_bool(value.get("enabled", True), False),
+                account_id=str(value.get("account_id") or ""),
+                base_url=str(value.get("base_url") or "https://ilinkai.weixin.qq.com"),
+                allowed_user_ids=_coerce_opaque_str_ids(value.get("allowed_user_ids", [])),
+            )
     return WeixinConfig(
+        accounts=accounts,
+        default_enabled=section.read("default_enabled", _safe_bool),
         session_folder=_coerce_session_folder(section.get("session_folder")),
         enabled=bool(section.get("enabled")),
         token=str(section.get("token")),

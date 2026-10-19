@@ -1,4 +1,12 @@
 {
+  "familyWeixin": {
+    "account": "Account WeChat",
+    "new_account": "Identificativo nuovo account",
+    "key_hint": "Usa minuscole, cifre, _ o -. Esempio: family1.",
+    "add": "Aggiungi account",
+    "shared_warning": "Le conversazioni sono separate. File, strumenti e memoria globale restano condivisi senza ulteriori restrizioni.",
+    "all_enabled": "Attiva tutti gli account WeChat"
+  },
   "commandCenter": {
     "automatic_cards": "Schede automatiche per tutte le sessioni",
     "card_limits": "Disattivate per impostazione predefinita. Il modello in background esegue una chiamata alla volta. Al massimo un tentativo per sessione ogni {{minutes}} minuti e {{hourly}} tentativi all’ora condivisi tra tutte le sessioni, inclusi quelli falliti. Stato in tempo reale e decisioni non usano il modello.",

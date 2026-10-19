@@ -1,4 +1,12 @@
 {
+  "familyWeixin": {
+    "account": "WeChat-Konto",
+    "new_account": "Neuer Kontoschlüssel",
+    "key_hint": "Kleinbuchstaben, Ziffern, _ oder -, z. B. family1.",
+    "add": "Konto hinzufügen",
+    "shared_warning": "Chatverläufe sind getrennt. Dateien, Werkzeuge und globaler Speicher bleiben ohne weitere Einschränkungen gemeinsam.",
+    "all_enabled": "Alle WeChat-Konten aktivieren"
+  },
   "commandCenter": {
     "automatic_cards": "Automatische Karten für alle Sitzungen",
     "card_limits": "Standardmäßig aus. Das Hintergrundmodell verarbeitet jeweils einen Aufruf. Höchstens ein Versuch pro Sitzung alle {{minutes}} Minuten und insgesamt {{hourly}} Versuche pro Stunde für alle Sitzungen, auch bei Fehlern. Live-Status und Entscheidungen brauchen kein Modell.",

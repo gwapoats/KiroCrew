@@ -492,7 +492,9 @@ def _forget_superseded_start(self: GatewayOrchestrator, channel_type: str, clien
     if isinstance(transports, dict):
         current = transports.get(channel_type)
         dispatcher = getattr(current, "dispatcher", None)
-        if current is not None and getattr(dispatcher, "client", None) is client:
+        if current is client or (
+            current is not None and getattr(dispatcher, "client", None) is client
+        ):
             transports.pop(channel_type, None)
     if getattr(self, f"_{channel_type}_client", None) is client:
         setattr(self, f"_{channel_type}_client", None)

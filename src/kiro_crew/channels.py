@@ -112,7 +112,7 @@ def builtin_channel_descriptors() -> tuple[ChannelDescriptor, ...]:
         ChannelDescriptor(
             channel_type="weixin",
             start=maybe_start_weixin,
-            boot_keys=frozenset({"enabled", "token", "account_id", "base_url"}),
+            boot_keys=frozenset({"enabled", "token", "account_id", "base_url", "accounts", "default_enabled"}),
             credentials=(CRED_WEIXIN_TOKEN,),
             credential_fallbacks=((CRED_WEIXIN_TOKEN, "token"),),
             # weixin/gateway.py refuses to start on either half missing, so a
@@ -224,5 +224,16 @@ def channel_readiness(cfg: object, creds: Mapping[str, str]) -> tuple[ChannelRea
         missing_config = tuple(
             attr for attr in descriptor.required_config if not _config_credential(section, attr)
         )
+        if descriptor.channel_type == "weixin" and section is not None and getattr(section, "accounts", None):
+            from kiro_crew.weixin.accounts import account_section, decode_tokens
+
+            tokens = decode_tokens(creds.get(CRED_WEIXIN_TOKEN, "") or getattr(section, "token", ""))
+            ready = any(
+                account_section(section, key).enabled
+                and account_section(section, key).account_id and tokens.get(key)
+                for key in ["default", *section.accounts]
+            )
+            if ready:
+                missing, missing_config = (), ()
         out.append(ChannelReadiness(descriptor.channel_type, enabled, missing, missing_config))
     return tuple(out)

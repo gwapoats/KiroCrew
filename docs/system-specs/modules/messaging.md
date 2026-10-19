@@ -927,6 +927,19 @@ Gateway shutdown runs channel teardown and `SessionManager.close_all()` concurre
 
 ## Layer 3 — session-key namespacing (`link.py`)
 
+Named Weixin bindings use `account/user` as their peer bucket while retaining the
+`weixin` surface namespace. They always use per-channel-peer scope, even if other
+DMs opt into unified scope. The default binding retains its existing keys.
+`weixin/multi.py` registers one transport that routes explicit destinations such
+as `user:family1/<user-id>` to the matching child connection. A bare user id routes
+only to the default binding, never to whichever bot connected last. Every child
+keeps independent cursors, deduplication, reply contexts, allow-lists and status.
+Each connection can be disabled; a missing or removed connection fails closed.
+An iLink session-expired response marks that binding disconnected and names its
+connection key in the log while the poller backs off.
+These bindings share the host's tool governance and global memory: connection
+separation is not a separate user account or file-security boundary.
+
 Session keys are namespaced as `f"{channel_type}:{conversation_id}"` (`session_key()`) so keys never collide across channels (`SLACK_NAMESPACE = "slack"`). Legacy native-Slack sessions were keyed by the bare `thread_ts`; helpers provide the bidirectional `bare ⇄ slack:` shim consumed by `SessionMap` (`session_map.py` imports `ChannelLink` + `canonical_key`, no import cycle):
 
 - `is_legacy_slack_key(key)` — True iff `key` is a bare Slack `thread_ts` (fullmatched by `_SLACK_TS_RE = r"\d{1,20}\.\d{1,20}"`: bounded digit runs around one dot).

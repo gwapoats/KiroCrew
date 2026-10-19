@@ -310,6 +310,9 @@ export interface IMessageConfigSave {
  *  There is no credential field: the bot credential is obtained through the QR
  *  login flow and stored server-side, so the client only sees status. */
 export interface WeixinConfigData {
+  accounts?: string[]
+  binding_key?: string
+  channel_enabled?: boolean
   connected: boolean
   connect_error: string
   configured: boolean
@@ -346,6 +349,7 @@ export interface TeamsConfigSave {
 
 /** Writable Weixin config fields sent to PUT /api/weixin/config. */
 export interface WeixinConfigSave {
+  channel_enabled: boolean
   enabled: boolean
   dm_policy: string
   allowed_user_ids: string[]
@@ -437,9 +441,9 @@ export function createMessagingEndpoints({ get, post, put, j }: ClientTransport)
     saveTeamsConfig: (body: Partial<TeamsConfigSave>) => put('/api/teams/config', body).then(j) as Promise<{ ok: boolean; restart_required: boolean; verify_warning: string }>,
     // Weixin (iLink personal WeChat) — QR login flow. The bot credential is
     // written server-side; the client only ever sees connection status.
-    getWeixinConfig: () => get('/api/weixin/config').then(j) as Promise<WeixinConfigData>,
-    saveWeixinConfig: (body: Partial<WeixinConfigSave>) => put('/api/weixin/config', body).then(j) as Promise<{ ok: boolean; restart_required: boolean }>,
-    weixinQrStart: () => post('/api/channels/weixin/qr/start', {}).then(j) as Promise<{ session_id: string; qrcode_img_content: string; error?: string }>,
+    getWeixinConfig: (account = 'default') => get(`/api/weixin/config?account=${encodeURIComponent(account)}`).then(j) as Promise<WeixinConfigData>,
+    saveWeixinConfig: (body: Partial<WeixinConfigSave>, account = 'default') => put(`/api/weixin/config?account=${encodeURIComponent(account)}`, body).then(j) as Promise<{ ok: boolean; restart_required: boolean }>,
+    weixinQrStart: (account = 'default') => post(`/api/channels/weixin/qr/start?account=${encodeURIComponent(account)}`, {}).then(j) as Promise<{ session_id: string; qrcode_img_content: string; error?: string }>,
     weixinQrStatus: (sessionId: string) => get(`/api/channels/weixin/qr/status?session_id=${encodeURIComponent(sessionId)}`).then(j) as Promise<{ status: string; connected?: boolean; account_id?: string; error?: string }>,
 
     // WhatsApp (personal account, QR-paired via neonize) — QR pairing flow. The

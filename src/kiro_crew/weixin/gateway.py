@@ -26,6 +26,7 @@ from kiro_crew.weixin.transport_dispatch import WeixinDispatcher
 
 if TYPE_CHECKING:
     from kiro_crew.slack.gateway import GatewayOrchestrator
+    from kiro_crew.weixin.multi import WeixinAccountsTransport
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +38,16 @@ def _resolve_approval_mode(orch: "GatewayOrchestrator") -> str:
     return APPROVAL_AUTO if mode == APPROVAL_AUTO else APPROVAL_INTERACTIVE
 
 
-async def maybe_start_weixin(orch: "GatewayOrchestrator") -> "WeixinClient | None":
+async def maybe_start_weixin(
+    orch: "GatewayOrchestrator",
+) -> "WeixinClient | WeixinAccountsTransport | None":
     """Start the Weixin channel if enabled + credentialed; else no-op."""
     if not getattr(orch, "_weixin_enabled", False):
         return None
+    if getattr(getattr(orch._cfg, "weixin", None), "accounts", {}):
+        from kiro_crew.weixin.multi import start_accounts
+
+        return await start_accounts(orch)
     # NOTE: ``_weixin_enabled`` already folds in token+account_id (see
     # GatewayOrchestrator), so both are guaranteed non-empty past the guard.
     # A factory-level "enabled but not credentialed" INFO log here would be

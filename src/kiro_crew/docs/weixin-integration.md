@@ -33,6 +33,25 @@ are exposed to the dashboard.
 
 ## Access control
 
+### Multiple family accounts
+
+Select an existing binding in the WeChat settings panel, or add a new lowercase
+key such as `family1` and scan its QR code using that person's WeChat. Adding a
+binding preserves the default account. Each additional binding has its own
+enable switch and allow-list; the scanning user is enrolled when that list is
+empty. The global enable switch controls all bindings. Do not scan the default
+binding's login code to add another person: that replaces the default login.
+
+Named accounts have separate chat contexts even when unified DM scope is on.
+Files, tools and global memory remain shared unless separately restricted.
+For proactive delivery choose the named destination `user:family1/<user-id>`;
+`user:<user-id>` continues to select the default binding.
+
+Back up config and the protected credential store before adding a second binding.
+The multi-account version stores a token bundle in `WEIXIN_TOKEN`; an original
+single-account release cannot read it. To roll back, restore both backups with
+the old program. Keep the maintenance branch and its base tag for future upgrades.
+
 `Who can message the bot` maps to `weixin.dm_policy`:
 
 | Value | Behaviour |
@@ -105,7 +124,7 @@ credential store) and overrides `weixin.token`.
 | Symptom | Fix |
 |---|---|
 | Status stuck on "Signed in — restart to connect" | Restart the gateway; credentials are read once at boot |
-| `errcode -14` in the log | Session expired — re-run the QR sign-in |
+| `errcode -14` in the log | Session expired — the affected account is marked disconnected; re-run QR sign-in for that account |
 | `errcode -2` | iLink rate limit; the poller backs off automatically |
 | Bot ignores DMs | Check `dm_policy` — under `allowlist` the sender must be listed |
 | Group messages ignored | Expected: iLink bot identities do not receive group events |
