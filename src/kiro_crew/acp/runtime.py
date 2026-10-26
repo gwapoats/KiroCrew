@@ -7445,6 +7445,14 @@ class AcpRuntime:
             mcp_servers=wire_servers,
             kas_custom_agents=kas_agents,
         )
+        # codex-acp answers session/new before the requested MCP servers have
+        # started unless asked to wait, so under load a first prompt runs without
+        # Crew's own tools and the model reports them missing. 30 s stays inside
+        # the session-start budget.
+        from kiro_crew.acp_backends import ACP_BACKEND_CODEX as _CODEX
+
+        if self._harness.backend == _CODEX and wire_servers:
+            params.setdefault("_meta", {})["mcpStartupAwaitTimeoutMs"] = 30_000
 
         projected_sources: dict[str, str] = {}
         if self._member_context:
