@@ -70,6 +70,7 @@ from typing import Any, Mapping
 from kiro_crew.acp import session_mcp
 from kiro_crew.acp.session_mcp import CONTROL_PLANE_SERVERS, session_mcp_projection
 from kiro_crew.acp_backends import ACP_BACKEND_CODEX
+from kiro_crew.mcp_cleanup import ALWAYS_ON_BIN_MCP_SERVERS
 from kiro_crew.members import MEMBER_DISPATCH_SERVER
 from kiro_crew.providers.mirrors.base import (
     AgentConfigMirror,
@@ -88,6 +89,16 @@ from kiro_crew.providers.mirrors.identity import (
 logger = logging.getLogger(__name__)
 
 _D = Disposition
+
+#: The always-on Crew servers outside the control plane (guide, mate, computer).
+#: Withheld before, because an element the spec describes cannot carry the session's
+#: identity, which left a codex session with none of their tools. They are rebuilt
+#: from the managed source instead, exactly like the granted dashboard server, so the
+#: identity rides only an element whose command, args and env are Crew's own. Derived
+#: rather than spelled out, so a server that joins the always-on set is covered too.
+_IDENTITY_REBUILT_CREW_SERVERS = frozenset(ALWAYS_ON_BIN_MCP_SERVERS) - frozenset(
+    CONTROL_PLANE_SERVERS
+)
 
 #: The transport every ACP agent MUST support, so it needs no advertisement. An
 #: element with no ``type`` at all is this one: ACP v1 spells ``McpServer`` as
@@ -364,7 +375,7 @@ def codex_projection(
     kept: list[dict[str, Any]] = []
     for element in projection.servers:
         name = element.get("name")
-        if name == MEMBER_DISPATCH_SERVER:
+        if name == MEMBER_DISPATCH_SERVER or name in _IDENTITY_REBUILT_CREW_SERVERS:
             # The grant and restrictions come from the same parsed spec as the
             # rest of this array. Only the gateway's managed launch gets identity.
             if name in projection.restricted or name in projection.disabled_servers:

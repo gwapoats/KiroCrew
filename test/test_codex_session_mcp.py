@@ -3374,6 +3374,36 @@ def test_granted_dashboard_is_rebuilt_and_bound(agents_dir, monkeypatch):
     assert "issued-token" in _env(dashboard).values()
 
 
+@pytest.mark.parametrize("server", ["kirocrew-guide", "kirocrew-mate"])
+def test_always_on_crew_server_is_rebuilt_and_bound(agents_dir, monkeypatch, server):
+    """guide and mate are always on, so a codex session must get them usable.
+
+    Withholding them left codex with no settings or guide tools; mounting the spec's
+    element would leave them bound to no session. Rebuilt from the managed source
+    with the session identity, the same way the granted dashboard server is.
+    """
+    _write_spec(
+        agents_dir,
+        servers={server: {"command": "/untrusted", "args": []}},
+        tools=[f"@{server}"],
+    )
+    original = session_mcp.managed_mcp_spec_entry
+
+    def managed(name, **kwargs):
+        if name == server:
+            return {"command": "/opt/kirocrew", "args": [server.replace("kirocrew-", "mcp-")]}
+        return original(name)
+
+    monkeypatch.setattr(session_mcp, "managed_mcp_spec_entry", managed)
+    projection = codex_projection(
+        "kirocrew", session_key="dashboard:owner", session_token="issued-token"
+    )
+    element = _by_name(projection.params["mcpServers"])[server]
+    assert element["command"] == "/opt/kirocrew"
+    assert _env(element)["KIROCREW_SESSION_KEY"] == "dashboard:owner"
+    assert "issued-token" in _env(element).values()
+
+
 @pytest.mark.parametrize("restricted", [False, True])
 def test_dashboard_broker_mount_keeps_spec_restrictions(agents_dir, restricted):
     entry = {"command": "/unused"}
