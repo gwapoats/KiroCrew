@@ -291,6 +291,28 @@ class ToolGateUnroutable(Exception):
     """
 
 
+def _lab_own_gateway_credential(backend: str) -> frozenset:
+    """LAB ONLY: this instance's own gateway credential, unmasked for a codex child.
+
+    Crew's MCP servers run as codex's children, so with ``.local_secret`` and ``run/``
+    masked every gateway-backed Crew tool fails with "no internal credential". This
+    drops only the real paths under the ACTIVE ``KIROCREW_HOME`` from the mask, and
+    nothing when that home is the default ``~/.kiro/crew``, so a second instance on the
+    same host never exposes the default gateway's credential. Off unless
+    ``KIROCREW_LAB_CODEX_OWN_SECRET=1``. Not for upstream: the proper fix moves those
+    readers behind the gateway.
+    """
+    if backend != ACP_BACKEND_CODEX or os.environ.get("KIROCREW_LAB_CODEX_OWN_SECRET") != "1":
+        return frozenset()
+    home = os.environ.get("KIROCREW_HOME", "").strip()
+    if not home:
+        return frozenset()
+    active = os.path.realpath(os.path.expanduser(home))
+    if active == os.path.realpath(os.path.expanduser("~/.kiro/crew")):
+        return frozenset()
+    return frozenset(os.path.join(active, leaf) for leaf in (".local_secret", "run"))
+
+
 def adapter_hidden_credential_dirs(backend: str) -> tuple:
     """Absolute paths on the read-gate floor to hide from *backend*'s child.
 
@@ -384,7 +406,9 @@ def adapter_hidden_credential_dirs(backend: str) -> tuple:
     excluded_leaves = tuple(
         sorted(set(ADAPTER_OWN_CREDENTIAL_LEAVES.get(backend, ())) | host_runtime | gate_artifacts)
     )
-    return sandbox_credential_targets(excluded_leaves)
+    targets = sandbox_credential_targets(excluded_leaves)
+    lab_own = _lab_own_gateway_credential(backend)
+    return tuple(t for t in targets if os.path.realpath(t) not in lab_own) if lab_own else targets
 
 
 def adapter_expose_files(backend: str, hidden: tuple) -> tuple:
