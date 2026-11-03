@@ -4,13 +4,14 @@
 
 Live speech-to-text for the dashboard composer. The browser streams 16 kHz mono Int16 PCM over a WebSocket and the server relays partial hypotheses, one or more final transcripts, and (when enabled) an auto-submit signal.
 
-All selectable recognisers implement streaming (`stt_stream._STREAMING_PROVIDERS`): `local` processes audio in this process, `apple` processes it on-device, and `transcribe` sends it to AWS Transcribe Streaming. The fourth selectable value, `off`, is not a recogniser: it runs nothing.
+Three recognisers implement streaming (`stt_stream._STREAMING_PROVIDERS`): `local` processes audio in this process, `apple` processes it on-device, and `transcribe` sends it to AWS Transcribe Streaming. `openai` is batch-only: it uploads each finished recording to an OpenAI-compatible server ([OpenAI-compatible server](#openai-compatible-server-openai)). The last selectable value, `off`, is not a recogniser: it runs nothing.
 
 | `stt.provider` | Where recognition runs | Cost | Precondition |
 |---|---|---|---|
 | `local` (default) | this process, whisper.cpp held loaded by [`kiro_crew.stt`](../../../src/kiro_crew/stt/__init__.py) | free | desktop builds include the runtime; select a model and click **Download now** |
 | `apple` | the OS, on-device SpeechAnalyzer | free | macOS 26 or later, and a Swift toolchain to build the helper |
 | `transcribe` | AWS Transcribe Streaming | billed per audio-second | the `voice` extra, and a recorded AWS consent |
+| `openai` | the server in `stt.openai_base_url`, batch only | the server's | `stt.openai_base_url` and `stt.openai_model`; `https`, or `http` to a loopback IP |
 | `off` | nowhere | free | none. Every speech path answers `stt_disabled`, exactly as `stt.enabled = false` does; the live socket returns a `stt_streaming_disabled` error frame because `off` is not in `_STREAMING_PROVIDERS`. Also the value an unknown stored provider degrades to ([Legacy provider values](#legacy-provider-values)) |
 
 The batch path at `POST /api/stt/transcribe` (`transcribe.transcribe_audio`)
@@ -31,7 +32,9 @@ cancellation by aborting the native decode before the endpoint deletes the clip.
 The batch endpoint's response contract: a decode that heard nothing
 (`transcribe_audio` returns `""`) is `200 {"text": ""}`; a failed decode
 (`transcribe_audio` returns `None`) or an unexpected error is `500` with
-`code: "stt_transcription_failed"` (`handlers/core_stt_access.py:_CODE_STT_FAILED`). The
+`code: "stt_transcription_failed"` (`handlers/core_stt_access.py:_CODE_STT_FAILED`),
+unless the provider said why: then `transcribe.last_failure()` supplies the code,
+sentence and status (`openai`'s, below). The
 meetings audio import folds both into one failure: any falsy transcript, including
 `""` and a segmented over-cap import where a segment failed or was silent, is a
 `502` with `code: "transcription_failed"`
@@ -160,6 +163,8 @@ picker, with the detail in its info tip (`pages/settings/SttRetentionNote.tsx`).
   outside the user's account; an AWS Organizations AI services opt-out policy
   stops that and deletes what was kept for it. The note links that policy's
   documentation.
+- **`openai`.** The provider reads the caller's temp file and posts it; it writes
+  no copy. What the server keeps is the server's rule, and the note says so.
 - **Text.** The transcript becomes composer text and is kept with the message
   like typed input.
 
@@ -1501,11 +1506,56 @@ snapshot, so anything the user typed before speaking survives, and the caret doe
 not jump. The snapshot clears on the final, so the next utterance starts from the
 newly committed text.
 
+## OpenAI-compatible server (`openai`)
+
+`stt/openai_compat.py` posts one recording to `<stt.openai_base_url>/audio/transcriptions`
+as multipart: `file` (the recording as recorded, named for its validated suffix),
+`model` (`stt.openai_model`), `response_format=json`, `language` (the primary
+subtag of `stt.language_code`, omitted for `auto`) and `prompt`
+(`stt.openai_prompt`, omitted when empty). It reads `text` from the JSON answer.
+
+- **Who sets the destination.** The three keys are not in the `PUT /api/config/stt`
+  allowlist, which app tokens reach, nor in the owner `PATCH /api/config/kirocrew`
+  set, and `config.json` is read-only in every sandbox. So the operator's own
+  terminal (`kirocrew config set`) or a hand edit is the only writer, the same bar
+  as `stt.custom_model_path`. `openai_base_url` is `sensitive`, so the general
+  config read masks it.
+- **Where it may go.** The loader keeps an `http(s)` URL with a host and no user
+  info, query or fragment. Availability then refuses plain `http` unless
+  `decisions.local_models.is_loopback_endpoint` holds (a literal loopback address;
+  `localhost` is a name and does not count). Availability reads config only and
+  makes no request, so a dictation never waits on a probe.
+- **The key.** The `STT_OPENAI_API_KEY` vault entry, sent as `Authorization:
+  Bearer` when set. Never read from `.env` or the environment, never logged.
+  Redirects are not followed, so the header cannot reach another host, and the
+  client does not read proxy variables.
+- **Bounds.** At most 25 MB is uploaded and 1 MB of answer read; `stt.timeout_secs`
+  bounds the whole request and the connect phase gets at most 10 s.
+- **Streaming.** Not in `_STREAMING_PROVIDERS`. The composer records the whole
+  utterance and uploads it (`sttCanStream`), Settings hides the streaming switch,
+  and `/api/ws/stt` answers `stt_streaming_disabled`. `batch_duration_cap_secs` is
+  `None`: the server bounds the length and fails loudly.
+
+A failure raises `SttRequestError`; `transcribe_audio` logs it, keeps it for
+`last_failure()` and returns `None`, so channel adapters still see `None`. The
+batch endpoint answers with its code, sentence and status, and the composer maps
+the code to a translated sentence (`lib/sttProviders.ts` `BATCH_ERROR_CODE_KEY`).
+
+| Code | Status | Cause |
+|---|---|---|
+| `stt_openai_unreachable` | 502 | connection refused, a DNS or TLS failure, or a dropped connection |
+| `stt_openai_timeout` | 504 | no complete answer within `stt.timeout_secs` |
+| `stt_openai_auth` | 502 | the server answered 401 or 403 |
+| `stt_openai_http_error` | 502 | any other non-2xx, a 3xx included; the sentence carries a redacted excerpt of the server's message |
+| `stt_openai_bad_response` | 502 | a 2xx without a JSON `text` string |
+| `stt_openai_audio_too_large` | 413 | a file over 25 MB from a caller other than the dashboard, which caps uploads itself |
+| `stt_openai_not_configured` | 503 | a caller that skipped the availability check, or a configuration that changed after it |
+
 ## Registered providers
 
 A composed edition can add STT providers through the `speech` slot on `PlatformContext` (`SpeechProviderRegistry.stt_providers()`; see `platform-context.md`). The default registry adds none, so a standalone install has exactly the built-in set.
 
-- **Collision rule.** A registered name may not be a built-in (`local`, `apple`, `transcribe`), a retired name or `off`, may not be blank and may not repeat. `speech_providers.validate_speech_registry` refuses any of these at boot with `PlatformCompositionError`, so an edition can add a provider but never replace one.
+- **Collision rule.** A registered name may not be a built-in (`local`, `apple`, `transcribe`, `openai`), a retired name or `off`, may not be blank and may not repeat. `speech_providers.validate_speech_registry` refuses any of these at boot with `PlatformCompositionError`, so an edition can add a provider but never replace one.
 - **Default precedence.** A stored `stt.provider` always wins. Only an absent key takes the edition's `default_stt()`, and only when that is `None` does it take core's `local`. An unusable stored value keeps its built-in fallback below, so a typo never reaches the edition default.
 - **Streaming.** A registered provider joins the streaming grant only when its `streaming` attribute is true. Positive membership stays the rule.
 - **A session limit the backend owns.** A streaming provider whose backend decides how long one session runs may set the optional `owns_session_limit = True` (`speech_providers.owns_session_limit`; exactly `True` only, as for `streaming`). Core then arms no deadline for its sessions and its `ready` frame carries no `max_duration_ms`, so the backend's limit is the only one and can change without a client release. When the backend ends a session at its limit, the provider emits an `error` event with `code: "stt_max_duration_exceeded"` after any trailing `final`. Core relays that code, so the dashboard shows its length-limit message, and audits the end as `timeout`, as it does its own cap. Such a provider must bound its own I/O (connect and read timeouts), because no core deadline will end a session whose backend stops answering. Without the attribute, `_MAX_STREAM_DURATION_SECS` applies, as it does to the built-in providers.
@@ -1529,7 +1579,7 @@ The Settings picker (`SttSettings`, through `lib/speechProviders.ts`) renders it
 
 ## Legacy provider values
 
-`_validated_stt_provider` in `config/sections_stt.py` accepts `local`, `apple`, `transcribe`, `off`, and any name an edition registered (see Registered providers). Two classes of stored value fall outside that set and degrade differently, each logging the replacement once per process rather than preventing the gateway from loading a voice setting:
+`_validated_stt_provider` in `config/sections_stt.py` accepts `local`, `apple`, `transcribe`, `openai`, `off`, and any name an edition registered (see Registered providers). Two classes of stored value fall outside that set and degrade differently, each logging the replacement once per process rather than preventing the gateway from loading a voice setting:
 
 - Persisted `whisper`, `mlx`, `parakeet`, or `faster` (the retired names) degrade to `local`: each was a local recogniser the user had working, and the resident engine recognises the same speech.
 - Any other value degrades to `off`. An unknown value used to degrade to `local`, which put a typo or a guessed value onto the one provider that links a native library into the gateway; a user told to set `stt.provider off` while that library was crashing on model load got the crashing engine back, and learned it only from a WARNING line (kirodotdev/KiroCrew#13179). Failing closed is the one reading that cannot make things worse. `kirocrew config set stt.provider <value>` refuses a value outside the enum at the write, so a stored unknown value can only arrive from a hand edit or an older writer.
