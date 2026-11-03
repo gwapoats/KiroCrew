@@ -91,10 +91,10 @@ def _load_stt(tmp_path: Path, section: dict) -> str:
         return KiroCrewConfig.load().stt.provider
 
 
-#: The exact text a standalone install logged before the seam existed.
+#: The text a standalone install logs; the seam adds nothing to it.
 _STANDALONE_STT_WARNING = (
     "Unknown STT provider 'whispr'; using 'off' instead, so no recogniser runs until "
-    "the value is fixed. Selectable providers: local, apple, transcribe, off. Run "
+    "the value is fixed. Selectable providers: local, apple, transcribe, openai, off. Run "
     "'kirocrew config set stt.provider <provider>' to choose one, or "
     "'kirocrew config defaults --adopt stt.provider' to drop the stored value."
 )
@@ -112,7 +112,13 @@ class TestStandaloneIsUnchanged:
             _install(DefaultSpeechProviderRegistry())
 
     def test_valid_sets_are_the_builtins(self, standalone) -> None:
-        assert sections_stt.valid_stt_providers() == ("local", "apple", "transcribe", "off")
+        assert sections_stt.valid_stt_providers() == (
+            "local",
+            "apple",
+            "transcribe",
+            "openai",
+            "off",
+        )
         assert sections_stt.valid_stt_providers() is sections_stt._VALID_STT_PROVIDERS
         assert voice_reply.valid_providers() == frozenset({"polly", "system"})
         assert voice_reply.valid_providers() is voice_reply.VALID_PROVIDERS
@@ -152,7 +158,14 @@ class TestRegisteredProvider:
         _install(_Registry(stt=("acme",), tts=("acme",)))
 
     def test_valid_sets_include_it(self) -> None:
-        assert sections_stt.valid_stt_providers() == ("local", "apple", "transcribe", "acme", "off")
+        assert sections_stt.valid_stt_providers() == (
+            "local",
+            "apple",
+            "transcribe",
+            "openai",
+            "acme",
+            "off",
+        )
         assert "acme" in voice_reply.valid_providers()
 
     def test_config_load_keeps_it(self, tmp_path, caplog) -> None:
@@ -174,7 +187,7 @@ class TestRegisteredProvider:
     def test_unknown_name_lists_it(self, caplog) -> None:
         with caplog.at_level(logging.WARNING):
             assert sections_stt._validated_stt_provider("whispr") == "off"
-        assert "Selectable providers: local, apple, transcribe, acme, off." in caplog.text
+        assert "Selectable providers: local, apple, transcribe, openai, acme, off." in caplog.text
 
     def test_config_set_accepts_it(self) -> None:
         from kiro_crew.cli_config import _declared_enum_value
@@ -197,7 +210,7 @@ class TestEditionDefault:
         assert voice_reply.resolve_configured_provider({}) == "acme"
         assert voice_reply.resolve_configured_provider(None) == "acme"
 
-    @pytest.mark.parametrize("stored", ["local", "apple", "transcribe", "off"])
+    @pytest.mark.parametrize("stored", ["local", "apple", "transcribe", "openai", "off"])
     def test_a_stored_stt_value_wins(self, tmp_path, stored) -> None:
         assert _load_stt(tmp_path, {"provider": stored}) == stored
 

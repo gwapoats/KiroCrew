@@ -1649,13 +1649,13 @@ class TestStreamingEndpointGate:
         ``off`` is the one selectable value that is NOT a recogniser: it exists so
         that "no speech" has a spelling, and the 503 it draws from this gate is the
         intended answer. ``test_stt_provider_off`` pins that it never joins the tuple.
+        ``openai`` has no partial channel: it uploads each finished recording.
         """
-        from kiro_crew.config.sections import STT_PROVIDER_OFF
+        from kiro_crew.config.sections import STT_PROVIDER_OFF, STT_PROVIDER_OPENAI
         from kiro_crew.dashboard import stt_stream
 
-        assert set(stt_stream._STREAMING_PROVIDERS) == set(_VALID_STT_PROVIDERS) - {
-            STT_PROVIDER_OFF
-        }
+        not_streaming = {STT_PROVIDER_OFF, STT_PROVIDER_OPENAI}
+        assert set(stt_stream._STREAMING_PROVIDERS) == set(_VALID_STT_PROVIDERS) - not_streaming
 
 
 class TestNoBlockingCallOnEventLoop:
