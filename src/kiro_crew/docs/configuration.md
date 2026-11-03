@@ -427,12 +427,12 @@ transcribed the same way.
 | Key | Description | Default |
 |-----|-------------|---------|
 | `stt.enabled` | Turn spoken input into text you can send | `true` |
-| `stt.provider` | `"local"` (this machine, no account), `"apple"` (the on-device recognizer built into macOS 26 and later), `"transcribe"` (AWS Transcribe, which bills your AWS account), or `"off"` (no recognizer runs, the same as turning speech input off). `kirocrew config set` refuses any other value. A stored unknown value runs as `off` with a log warning, and `kirocrew config defaults --adopt stt.provider` rewrites it to `off` rather than switching to `local`; a retired name reads as `local` (see below) | `"local"` |
+| `stt.provider` | `"local"` (this machine, no account), `"apple"` (the on-device recognizer built into macOS 26 and later), `"transcribe"` (AWS Transcribe, which bills your AWS account), `"openai"` (the OpenAI-compatible server in `stt.openai_base_url`; see below), or `"off"` (no recognizer runs, the same as turning speech input off). `kirocrew config set` refuses any other value. A stored unknown value runs as `off` with a log warning, and `kirocrew config defaults --adopt stt.provider` rewrites it to `off` rather than switching to `local`; a retired name reads as `local` (see below) | `"local"` |
 | `stt.model` | Which speech model the local provider downloads and runs: `tiny`, `base`, `small`, `large-v3-turbo`, or `custom` to run your own (see below). Bigger is more accurate and a longer first-time download — and on a CPU-only build the largest can recognise slower than you speak (an 11-second clip took 13.6 s on a 16-thread aarch64 CPU, 1.24x the audio), which Settings → Voice says beside the choice | `"base"` |
 | `stt.custom_model_path` | File name of a whisper.cpp ggml model in the speech models folder (`models/whisper` under the Kiro Crew home), run instead of a catalog one when `model` is `custom`. Must resolve to a regular file inside that folder; nothing is downloaded | `""` |
 | `stt.custom_model_sha256` | The 64-character hex sha256 of the file at `custom_model_path`, checked on every load. Required for `model: "custom"`; with either half missing or malformed, `custom` degrades to the default model with a warning | `""` |
-| `stt.language_code` | Language for speech recognition, e.g. `en-US`, `fr-FR`. `"auto"` auto-detects on the local provider | `"auto"` |
-| `stt.streaming` | Show words in the message box while you are still speaking rather than only once you stop. Every provider supports it; turning it off spends less CPU on `local` and fewer API calls on `transcribe` | `true` |
+| `stt.language_code` | Language for speech recognition, e.g. `en-US`, `fr-FR`. `"auto"` auto-detects on the `local` and `openai` providers | `"auto"` |
+| `stt.streaming` | Show words in the message box while you are still speaking rather than only once you stop. Every provider but `openai` supports it; turning it off spends less CPU on `local` and fewer API calls on `transcribe` | `true` |
 | `stt.silence_ms` | How long a pause must last before what you said is treated as a finished phrase. Raise it if you are being cut off mid-sentence, lower it if the text lags behind you. A value outside 200-5000 ms is clamped into that range. Set here only: Settings -> Voice offers no picker, because nobody can tell 700 ms from 750 ms by feel, and the setting most people actually want when dictation cuts them off is `stt.endpointing` | `700` |
 | `stt.partial_interval_ms` | How often the live transcript is refreshed while you speak. A value outside 100-5000 ms is clamped into that range. Set here only: Settings → Voice offers no picker for it, because a decode costs a large fixed amount plus a small amount per second of audio (about 0.78 s + 0.08 s per audio-second for `base` on a 32-core CPU build), so on any CPU build the recogniser, not this number, decides the real cadence | `400` |
 | `stt.idle_evict_secs` | How long the local model stays in memory after your last recording. It holds roughly 150 MB at the default model and reloads in a fraction of a second, so lower this on a machine short of memory. `0` releases it as soon as you stop speaking. A value outside 0-86400 s is clamped into that range | `600` |
@@ -446,6 +446,32 @@ transcribed the same way.
 | `stt.transcribe_profile` | AWS profile for the Transcribe API. Empty uses the default credential chain (`transcribe` provider only) | `""` |
 | `stt.transcribe_vocabulary` | Name of an Amazon Transcribe custom vocabulary to recognise your names and terms, from the same region. Its language must match `stt.language_code`, or Amazon Transcribe refuses it and dictation fails. Empty uses none (`transcribe` provider only) | `""` |
 | `stt.transcribe_languages` | Languages speakers switch between in one recording, for example `["vi-VN", "en-US"]`. With two or more, a live Transcribe stream identifies the language of each part and transcribes it in that language instead of using `stt.language_code`; with fewer, `stt.language_code` is used. At most five, one dialect per language (`en-US` and `en-GB` cannot be listed together), and a list that breaks either rule is ignored with a log warning. Applies to streaming dictation and meetings; a voice message, or dictation with `stt.streaming` off, still uses `stt.language_code`, because Amazon Transcribe identifies several languages only in a raw PCM stream. A custom vocabulary is then sent in the form identification accepts, and its language should be one of the candidates. Needs `amazon-transcribe` 0.6.3 or newer (`transcribe` provider only) | `[]` |
+| `stt.openai_base_url` | Base URL of the server the `openai` provider posts recordings to, including the API version, e.g. `http://127.0.0.1:8000/v1` or `https://api.openai.com/v1`. Plain `http://` only to a loopback IP address such as `127.0.0.1` (the name `localhost` does not count); any other host needs `https://`. A user name, password, query or fragment makes the value ignored with a log warning (`openai` provider only) | `""` |
+| `stt.openai_model` | The `model` sent with each recording, e.g. `whisper-1`, or the name a local server lists for its model (`openai` provider only) | `""` |
+| `stt.openai_prompt` | Text sent as `prompt` with each recording, such as the names and terms you say often. How much of it the model uses is up to the server; empty sends none (`openai` provider only) | `""` |
+
+#### An OpenAI-compatible server
+
+`stt.provider: "openai"` sends each finished recording to any server that speaks
+OpenAI's `POST /v1/audio/transcriptions`: the OpenAI API itself, or a speech server
+on your own machine. One server can then answer the dashboard microphone, voice
+notes from a channel, and other tools on the machine. Set it from your own terminal:
+
+```bash
+kirocrew config set stt.openai_base_url http://127.0.0.1:8000/v1
+kirocrew config set stt.openai_model <model name>
+kirocrew config set stt.openai_prompt "Kiro Crew, MCP, the names you say often"
+kirocrew config set stt.provider openai
+```
+
+These three keys decide where your audio goes, so only the CLI and `config.json`
+write them: the dashboard and apps cannot. A server that needs a key reads it from
+the `STT_OPENAI_API_KEY` secret (Settings → Secrets), sent as
+`Authorization: Bearer`; it is never read from `.env`. The recording is uploaded
+as it was recorded (WebM or MP4 from a browser, usually Ogg from a channel), with
+`language` set from `stt.language_code` (`zh` for `zh-CN`; `auto` lets the server
+detect it). Redirects are not followed. Recognition starts when you stop talking,
+so live text while you speak, and `stt.endpointing`, are not available with it.
 
 #### The local provider downloads one model, once
 

@@ -23,6 +23,7 @@ from kiro_crew import platform_compat, stt
 from kiro_crew.config.fields import _coerce_bool
 from kiro_crew.config.loader import _VALID_STT_PROVIDERS, KiroCrewConfig, config_path
 from kiro_crew.config.sections import (
+    STT_AUTO_LANGUAGE_PROVIDERS,
     STT_LANGUAGE_AUTO,
     TRANSCRIBE_LANGUAGES_MAX,
     TRANSCRIBE_LANGUAGES_MIN,
@@ -154,14 +155,14 @@ _STT_LANGUAGE_CODES: tuple[str, ...] = COMMON_LANGUAGE_CODES
 
 
 def _stt_language_codes(stt_cfg: SttConfig) -> list[str]:
-    """The picker's codes for *stt_cfg*: ``auto`` first for the local provider, the
-    common codes, then any stored code they do not already hold.
+    """The picker's codes for *stt_cfg*: ``auto`` first for a provider that detects
+    the language, the common codes, then any stored code they do not already hold.
 
     A stored code outside the common list comes from config.json or an older
     build. Offering it keeps it on screen as a choice, so changing the language and
     changing back cannot lose it.
     """
-    codes = [STT_LANGUAGE_AUTO] if stt_cfg.provider == PROVIDER_LOCAL else []
+    codes = [STT_LANGUAGE_AUTO] if stt_cfg.provider in STT_AUTO_LANGUAGE_PROVIDERS else []
     codes += list(_STT_LANGUAGE_CODES)
     for stored in (stt_cfg.effective_language_code, *stt_cfg.transcribe_languages):
         if stored not in codes:

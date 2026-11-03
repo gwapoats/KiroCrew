@@ -33,6 +33,7 @@ is a copy that will be missing from the next branch someone adds:
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import importlib as _importlib
 import logging
 import os
@@ -44,6 +45,7 @@ import wave
 from typing import TYPE_CHECKING, Any
 
 from kiro_crew import _facade_mirror, aws_consent, pinned_fs, platform_compat, stt  # noqa: F401
+from kiro_crew.config.sections_stt import STT_PROVIDER_OPENAI
 from kiro_crew.extras import install_hint  # noqa: F401
 
 # The pinned-artifact table and the digest-verified decoder store live here. It
@@ -57,6 +59,7 @@ from kiro_crew.stt import decoder
 # The name stays importable from here because that is where callers have always
 # found it, and one filter with two import paths cannot drift.
 from kiro_crew.stt.hallucinations import filter_hallucinations  # noqa: F401
+from kiro_crew.stt.openai_compat import SttRequestError, config_problem, transcribe_openai
 from kiro_crew.transcribe_aws import _aws_availability, _transcribe_aws
 from kiro_crew.transcribe_ffmpeg import (
     _FFMPEG_CANDIDATE_DIRS,
@@ -223,8 +226,8 @@ def _registered_provider(provider: object) -> Any:
 #: whose unknown stored provider the loader degraded onto ``off``.
 CODE_PROVIDER_OFF = "stt_provider_off"
 
-#: The selected provider is one an edition registered, and its ``check()`` says
-#: it cannot run now. Not :data:`CODE_PROVIDER_OFF`: the user chose a provider,
+#: The selected provider is one an edition registered, or ``openai``, and its own
+#: check says it cannot run now. Not :data:`CODE_PROVIDER_OFF`: the user chose a provider,
 #: and the dashboard must not say they chose Off. A code the dashboard has no
 #: sentence for, so it shows ``detail`` instead.
 CODE_PROVIDER_UNAVAILABLE = "stt_provider_unavailable"
@@ -285,6 +288,12 @@ def availability_detail(stt_config=None) -> stt.Availability:  # type: ignore[no
         return _aws_availability()
     if provider == "apple":
         return _apple_availability()
+    if provider == STT_PROVIDER_OPENAI:
+        # Config only: a dictation must not wait on a network probe first.
+        problem = config_problem(stt_config)
+        if problem is None:
+            return stt.Availability(True)
+        return stt.Availability(False, CODE_PROVIDER_UNAVAILABLE, problem)
     registered = _registered_provider(provider)
     if registered is not None:
         # An edition-registered provider: its own check() answers. BLOCKING, like
@@ -397,6 +406,17 @@ def _redact_transcript(transcript: str) -> str:
     return transcript
 
 
+#: Why the last :func:`transcribe_audio` in this task returned None, when its provider said.
+_LAST_FAILURE: contextvars.ContextVar[SttRequestError | None] = contextvars.ContextVar(
+    "kiro_crew_transcribe_last_failure", default=None
+)
+
+
+def last_failure() -> SttRequestError | None:
+    """The reason the last :func:`transcribe_audio` call in this task failed, if known."""
+    return _LAST_FAILURE.get()
+
+
 async def transcribe_audio(audio_path: str, stt_config=None) -> str | None:  # type: ignore[no-untyped-def]
     """Transcribe an audio file. Returns the text, ``""``, or None.
 
@@ -414,6 +434,7 @@ async def transcribe_audio(audio_path: str, stt_config=None) -> str | None:  # t
     The channel adapters test truthiness, so ``""`` and None read the same
     there; the distinction is for callers that can tell the user which it was.
     """
+    _LAST_FAILURE.set(None)
     if stt_config is None:
         stt_config = await asyncio.to_thread(_load_stt_config)
 
@@ -432,6 +453,16 @@ async def transcribe_audio(audio_path: str, stt_config=None) -> str | None:  # t
         result = await _transcribe_aws(audio_path, stt_config)
     elif provider == "apple":
         result = await _transcribe_apple(audio_path, stt_config)
+    elif provider == STT_PROVIDER_OPENAI:
+        try:
+            result = await transcribe_openai(audio_path, stt_config)
+        except SttRequestError as exc:
+            logger.warning("STT provider 'openai' failed (%s): %s", exc.code, exc.detail)
+            _LAST_FAILURE.set(exc)
+            return None
+        except Exception:
+            logger.warning("STT provider 'openai' failed to transcribe", exc_info=True)
+            return None
     elif (registered := _registered_provider(provider)) is not None:
         # An edition-registered provider. Same contract as every branch here:
         # text, "" for silence, or None -- never an exception. Called on this
@@ -473,12 +504,14 @@ def batch_duration_cap_secs(stt_config=None) -> int | None:  # type: ignore[no-u
     """
     if stt_config is None:
         stt_config = _load_stt_config()
-    # AWS fails loudly, and a provider an edition registered handles its own
-    # length, so neither gets the local decoder's cap (or its duration probe).
-    # Any other name, an unrecognised one included, lands on a built-in decoder
-    # and keeps the ceiling.
+    # AWS and an `openai` server fail loudly, and a provider an edition registered
+    # handles its own length, so none of them gets the local decoder's cap (or its
+    # duration probe). Any other name, an unrecognised one included, lands on a
+    # built-in decoder and keeps the ceiling.
     provider = stt_config.provider
-    if provider == "transcribe" or _registered_provider(provider) is not None:
+    if provider in ("transcribe", STT_PROVIDER_OPENAI):
+        return None
+    if _registered_provider(provider) is not None:
         return None
     return _MAX_AUDIO_SECS
 

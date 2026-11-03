@@ -4092,7 +4092,10 @@
         "transcribe_region": "us-east-1",
         "transcribe_profile": "",
         "transcribe_vocabulary": "",
-        "transcribe_languages": []
+        "transcribe_languages": [],
+        "openai_base_url": "",
+        "openai_model": "",
+        "openai_prompt": ""
       }
     },
     {
@@ -4118,12 +4121,13 @@
       "sensitive": false,
       "tags": [],
       "label": "Provider",
-      "help": "Where speech is recognised. `local` runs on this machine and needs no account (it downloads one model the first time you dictate), `apple` uses the on-device recogniser built into macOS 26 and later, and `transcribe` sends your audio to AWS Transcribe, which bills your AWS account. `off` runs no recogniser at all, the same as turning speech input off.",
+      "help": "Where speech is recognised. `local` runs on this machine and needs no account (it downloads one model the first time you dictate), `apple` uses the on-device recogniser built into macOS 26 and later, `transcribe` sends your audio to AWS Transcribe, which bills your AWS account, and `openai` sends each finished recording to the OpenAI-compatible server in `openai_base_url`. `off` runs no recogniser at all, the same as turning speech input off.",
       "hasChildren": false,
       "enumValues": [
         "local",
         "apple",
         "transcribe",
+        "openai",
         "off"
       ],
       "defaultValue": "local"
@@ -4213,7 +4217,7 @@
       "sensitive": false,
       "tags": [],
       "label": "Streaming",
-      "help": "Show words in the message box while you are still speaking rather than only once you stop. Every provider supports it; turning it off spends less CPU on the local provider and fewer API calls on `transcribe`.",
+      "help": "Show words in the message box while you are still speaking rather than only once you stop. Every provider but `openai` supports it; turning it off spends less CPU on the local provider and fewer API calls on `transcribe`.",
       "hasChildren": false,
       "enumValues": null,
       "defaultValue": true
@@ -4399,6 +4403,48 @@
       "hasChildren": false,
       "enumValues": null,
       "defaultValue": null
+    },
+    {
+      "path": "stt.openai_base_url",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": true,
+      "tags": [],
+      "label": "OpenAI-compatible Server URL",
+      "help": "Base URL, with the API version, of the server the `openai` provider posts each recording to (`<url>/audio/transcriptions`), e.g. `http://127.0.0.1:8000/v1`. Plain `http://` only to a loopback IP such as 127.0.0.1, not `localhost`; other hosts need `https://`. No user name, password, query or fragment: the key is the `STT_OPENAI_API_KEY` secret. Set it with `kirocrew config set`; the dashboard does not write it.",
+      "hasChildren": false,
+      "enumValues": null,
+      "defaultValue": ""
+    },
+    {
+      "path": "stt.openai_model",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "OpenAI-compatible Model",
+      "help": "The `model` the `openai` provider asks the server for, e.g. `whisper-1` or the name the server lists for a local model.",
+      "hasChildren": false,
+      "enumValues": null,
+      "defaultValue": ""
+    },
+    {
+      "path": "stt.openai_prompt",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "OpenAI-compatible Prompt",
+      "help": "Text sent as `prompt` with every `openai` recording, such as the names and terms you say often. How the model uses it is up to the server.",
+      "hasChildren": false,
+      "enumValues": null,
+      "defaultValue": ""
     },
     {
       "path": "computer_use",
