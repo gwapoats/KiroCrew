@@ -16,15 +16,18 @@ import { describe, it, expect } from 'vitest'
 import { CATALOGS as RUNTIME_CATALOGS } from '../i18n/catalogs'
 import { SUPPORTED_LANGUAGES } from '../i18n/languages'
 import {
+  BATCH_ERROR_CODE_KEY,
   CATALOG_MODEL_PROVIDERS,
   FALLBACK_PROVIDERS,
   FALLBACK_STREAMING_PROVIDERS,
   PROVIDER_APPLE,
   PROVIDER_LABEL_KEY,
   PROVIDER_LOCAL,
+  PROVIDER_OPENAI,
   PROVIDER_TRANSCRIBE,
   STREAM_ERROR_CODE_KEY,
   UNAVAILABLE_CODE_KEY,
+  batchErrorMessage,
   downloadLabel,
   localeLanguage,
   nextTranscribeLanguages,
@@ -48,7 +51,7 @@ describe('provider labels', () => {
     // it exists to catch — including a retired provider left behind, which would
     // keep offering a label for something the backend refuses.
     expect(Object.keys(PROVIDER_LABEL_KEY).sort()).toEqual(
-      [PROVIDER_APPLE, PROVIDER_LOCAL, 'off', PROVIDER_TRANSCRIBE].sort(),
+      [PROVIDER_APPLE, PROVIDER_LOCAL, 'off', PROVIDER_OPENAI, PROVIDER_TRANSCRIBE].sort(),
     )
   })
 
@@ -279,6 +282,28 @@ describe('a streaming session that failed', () => {
     // The caller supplies the generic last resort, so an empty answer has to be
     // falsy for that `||` to reach it.
     expect(streamErrorMessage('', '')).toBe('')
+  })
+})
+
+describe('a recorded clip an openai server failed', () => {
+  it('names each code the provider reports and keeps the generic one generic', () => {
+    // The `CODE_*` values in `stt/openai_compat.py` that a dashboard upload can
+    // reach. `stt_transcription_failed` stays out: it names no reason.
+    expect(Object.keys(BATCH_ERROR_CODE_KEY).sort()).toEqual([
+      'stt_openai_auth',
+      'stt_openai_bad_response',
+      'stt_openai_http_error',
+      'stt_openai_timeout',
+      'stt_openai_unreachable',
+    ])
+    expect(batchErrorMessage('stt_transcription_failed')).toBe('')
+    expect(batchErrorMessage('')).toBe('')
+  })
+
+  it('has a catalog string behind each code key', () => {
+    for (const [code, key] of Object.entries(BATCH_ERROR_CODE_KEY)) {
+      expect(manualStreamErrors[key.replace('lib.sttProviders.', '')], code).toBeTruthy()
+    }
   })
 })
 

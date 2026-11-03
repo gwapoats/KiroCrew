@@ -401,7 +401,7 @@ async def api_stt_transcribe(request: web.Request) -> web.Response:
     import uuid
 
     from kiro_crew.dashboard import part_stream
-    from kiro_crew.transcribe import transcribe_audio  # noqa: F811
+    from kiro_crew.transcribe import last_failure, transcribe_audio  # noqa: F811
 
     cfg = KiroCrewConfig.load()
     # Off the loop: every provider branch of the probe reaches the filesystem, and
@@ -466,6 +466,12 @@ async def api_stt_transcribe(request: web.Request) -> web.Response:
 
         text = await transcribe_audio(tmp, cfg.stt)
         if text is None:
+            # A provider that said why gets its own code and sentence.
+            failure = last_failure()
+            if failure is not None:
+                return web.json_response(
+                    {"error": failure.detail, "code": failure.code}, status=failure.http_status
+                )
             return web.json_response(
                 {"error": "transcription failed", "code": _CODE_STT_FAILED}, status=500
             )

@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import re as _re
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit as _urlsplit
 
 from kiro_crew.config.fields import _meta, field_default
 from kiro_crew.stt.limits import DEFAULT_IDLE_EVICT_SECS as _STT_DEFAULT_IDLE_EVICT_SECS
@@ -45,18 +46,25 @@ STT_PROVIDER_LOCAL = "local"
 #: make things worse.
 STT_PROVIDER_OFF = "off"
 
+#: A server the operator names that speaks OpenAI's ``/audio/transcriptions``.
+STT_PROVIDER_OPENAI = "openai"
+
 #: Local Whisper can detect the spoken language; forcing English corrupts
 #: multilingual dictation before the recogniser can choose the right tokens.
 STT_LANGUAGE_AUTO = "auto"
 STT_LANGUAGE_FALLBACK = "en-US"
 
+#: Providers that detect the spoken language themselves, so ``auto`` stays ``auto``.
+STT_AUTO_LANGUAGE_PROVIDERS = (STT_PROVIDER_LOCAL, STT_PROVIDER_OPENAI)
+
 #: The recognisers a user can select. ``local`` runs whisper.cpp in-process,
-#: ``apple`` uses macOS 26+ on-device recognition, and ``transcribe`` sends audio
-#: to AWS Transcribe (billed, and gated on the AWS consent prompt). All three
-#: produce partial results, so streaming is not a per-provider capability.
-#: ``off`` selects no recogniser; it is deliberately absent from
-#: ``stt_stream._STREAMING_PROVIDERS``, which grants by positive membership.
-_VALID_STT_PROVIDERS = (STT_PROVIDER_LOCAL, "apple", "transcribe", STT_PROVIDER_OFF)
+#: ``apple`` uses macOS 26+ on-device recognition, ``transcribe`` sends audio to
+#: AWS Transcribe (billed, and gated on the AWS consent prompt), and ``openai``
+#: uploads each finished recording to the server in ``openai_base_url``. The
+#: first three produce partial results; ``openai`` is batch-only. Neither it nor
+#: ``off`` is in ``stt_stream._STREAMING_PROVIDERS``, which grants by positive
+#: membership.
+_VALID_STT_PROVIDERS = (STT_PROVIDER_LOCAL, "apple", "transcribe", "openai", STT_PROVIDER_OFF)
 
 
 def valid_stt_providers() -> tuple[str, ...]:
@@ -452,6 +460,49 @@ def _validated_stt_custom_sha256(value: object) -> str:
     return digest
 
 
+#: Unusable ``stt.openai_base_url`` values already warned about in this process.
+_WARNED_OPENAI_BASE_URLS: set[str] = set()
+
+
+def openai_base_url(value: object) -> str | None:
+    """*value* as a usable ``stt.openai_base_url``: ``""`` for none, None when unusable.
+
+    Shape only: an http(s) URL with a host and no user info, query or fragment.
+    The API key belongs in the vault, never in the URL.
+    """
+    if not isinstance(value, str):
+        return None
+    url = value.strip()
+    if not url:
+        return ""
+    try:
+        parts = _urlsplit(url)
+        parts.port  # raises on a bad port
+    except ValueError:
+        return None
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return None
+    if "@" in parts.netloc or parts.query or parts.fragment:
+        return None
+    return url.rstrip("/")
+
+
+def _validated_openai_base_url(value: object) -> str:
+    """:func:`openai_base_url` for a stored value: degrades to none, logs once, never quotes it."""
+    url = openai_base_url(value)
+    if url is not None:
+        return url
+    seen = value if isinstance(value, str) else repr(value)
+    if seen not in _WARNED_OPENAI_BASE_URLS:
+        _WARNED_OPENAI_BASE_URLS.add(seen)
+        logger.warning(
+            "Ignoring stt.openai_base_url: it must be an http:// or https:// URL with a "
+            "host and no user name, password, query or fragment. Store the API key as "
+            "the STT_OPENAI_API_KEY secret instead."
+        )
+    return ""
+
+
 @dataclass
 class SttConfig:
     """Speech-to-text configuration.
@@ -473,10 +524,11 @@ class SttConfig:
             "Provider",
             "Where speech is recognised. `local` runs on this machine and needs no "
             "account (it downloads one model the first time you dictate), `apple` "
-            "uses the on-device recogniser built into macOS 26 and later, and "
+            "uses the on-device recogniser built into macOS 26 and later, "
             "`transcribe` sends your audio to AWS Transcribe, which bills your AWS "
-            "account. `off` runs no recogniser at all, the same as turning speech "
-            "input off.",
+            "account, and `openai` sends each finished recording to the "
+            "OpenAI-compatible server in `openai_base_url`. `off` runs no "
+            "recogniser at all, the same as turning speech input off.",
             enum=list(_VALID_STT_PROVIDERS),
         ),
     )
@@ -552,8 +604,9 @@ class SttConfig:
         metadata=_meta(
             "Streaming",
             "Show words in the message box while you are still speaking rather than "
-            "only once you stop. Every provider supports it; turning it off spends "
-            "less CPU on the local provider and fewer API calls on `transcribe`.",
+            "only once you stop. Every provider but `openai` supports it; turning it "
+            "off spends less CPU on the local provider and fewer API calls on "
+            "`transcribe`.",
         ),
     )
     silence_ms: int = field(
@@ -667,6 +720,35 @@ class SttConfig:
             "picked together.",
         ),
     )
+    openai_base_url: str = field(
+        default="",
+        metadata=_meta(
+            "OpenAI-compatible Server URL",
+            "Base URL, with the API version, of the server the `openai` provider posts "
+            "each recording to (`<url>/audio/transcriptions`), e.g. "
+            "`http://127.0.0.1:8000/v1`. Plain `http://` only to a loopback IP such as "
+            "127.0.0.1, not `localhost`; other hosts need `https://`. No user name, "
+            "password, query or fragment: the key is the `STT_OPENAI_API_KEY` secret. "
+            "Set it with `kirocrew config set`; the dashboard does not write it.",
+            sensitive=True,
+        ),
+    )
+    openai_model: str = field(
+        default="",
+        metadata=_meta(
+            "OpenAI-compatible Model",
+            "The `model` the `openai` provider asks the server for, e.g. `whisper-1` "
+            "or the name the server lists for a local model.",
+        ),
+    )
+    openai_prompt: str = field(
+        default="",
+        metadata=_meta(
+            "OpenAI-compatible Prompt",
+            "Text sent as `prompt` with every `openai` recording, such as the names "
+            "and terms you say often. How the model uses it is up to the server.",
+        ),
+    )
 
     def __post_init__(self) -> None:
         language = self.language_code
@@ -681,7 +763,10 @@ class SttConfig:
     @property
     def effective_language_code(self) -> str:
         """Resolve a provider locale without changing the stored preference."""
-        if self.language_code == STT_LANGUAGE_AUTO and self.provider != STT_PROVIDER_LOCAL:
+        if (
+            self.language_code == STT_LANGUAGE_AUTO
+            and self.provider not in STT_AUTO_LANGUAGE_PROVIDERS
+        ):
             return STT_LANGUAGE_FALLBACK
         return self.language_code
 

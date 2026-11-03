@@ -18,6 +18,8 @@ export const PROVIDER_LOCAL = 'local'
 export const PROVIDER_APPLE = 'apple'
 /** AWS Transcribe: off-host and paid, behind the AWS consent gate. */
 export const PROVIDER_TRANSCRIBE = 'transcribe'
+/** The OpenAI-compatible server in `stt.openai_base_url`. Batch only. */
+export const PROVIDER_OPENAI = 'openai'
 
 /**
  * What the picker offers when the backend serves no provider list. `local` and
@@ -63,6 +65,7 @@ export const PROVIDER_LABEL_KEY: Record<string, string> = {
   local: 'pages.settings.sttSettings.provider_local',
   apple: 'pages.settings.sttSettings.provider_apple',
   transcribe: 'pages.settings.sttSettings.provider_transcribe',
+  openai: 'pages.settings.sttSettings.provider_openai',
   // No recogniser; also where the backend lands an unknown stored provider.
   off: 'pages.settings.sttSettings.provider_off',
 }
@@ -200,6 +203,25 @@ export const STREAM_ERROR_CODE_KEY: Record<string, string> = {
   // Mixed languages are picked but the gateway's amazon-transcribe package predates
   // the parameters they need. Upgrading it, or picking one language, is the fix.
   stt_transcribe_sdk_outdated: 'lib.sttProviders.stream_error_sdk_outdated',
+}
+
+/**
+ * Catalog KEY for each reason an `openai` server failed a recorded clip, from the
+ * `code` of a failed `POST /api/stt/transcribe`. Same keys-not-strings rule.
+ */
+export const BATCH_ERROR_CODE_KEY: Record<string, string> = {
+  stt_openai_unreachable: 'lib.sttProviders.batch_error_server_unreachable',
+  stt_openai_timeout: 'lib.sttProviders.batch_error_server_timeout',
+  stt_openai_auth: 'lib.sttProviders.batch_error_server_auth',
+  stt_openai_http_error: 'lib.sttProviders.batch_error_server_failed',
+  stt_openai_bad_response: 'lib.sttProviders.batch_error_server_failed',
+}
+
+/** The localised reason for a batch failure `code`, or `''` for one without its own. */
+export function batchErrorMessage(code: string): string {
+  return Object.prototype.hasOwnProperty.call(BATCH_ERROR_CODE_KEY, code)
+    ? i18nT(BATCH_ERROR_CODE_KEY[code])
+    : ''
 }
 
 /**
