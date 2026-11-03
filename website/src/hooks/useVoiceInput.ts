@@ -1,11 +1,11 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { api } from '../api/client'
-import { ApiError } from '../api/apiError'
+import { ApiError, apiErrorCode } from '../api/apiError'
 import { downloadBlob } from '../utils/download'
 import { streamingSupported, useStreamingStt } from './useStreamingStt'
 import { acquireMicStream, activeDeviceId, humanizeMicError, createLevelMeter, createAudioSample, getPreferredMicId, setPreferredMicId } from './mic'
 import { beginTranscription, settleTranscription, subscribeTranscripts, failedCapture, discardFailedCapture, takeFailedCapture } from './voiceTranscriptInbox'
-import type { SttModelProgress } from '../lib/sttProviders'
+import { batchErrorMessage, type SttModelProgress } from '../lib/sttProviders'
 import { i18nT } from '../i18n/t'
 
 function pickMimeType(): string {
@@ -88,7 +88,8 @@ async function transcribeCapture(blob: Blob, ext: string, sessionId: string | nu
   } catch (err) {
     // eslint-disable-next-line no-console -- surface transcription failures for debugging
     console.error('[voice] transcription failed:', err)
-    settleTranscription({ id: request.id, error: i18nT('hooks.useVoiceInput.transcription_request_failed'), sessionId, capture: { blob, ext, retryable: retryableFailure(err) } })
+    const reason = batchErrorMessage(apiErrorCode(err)) || i18nT('hooks.useVoiceInput.transcription_request_failed')
+    settleTranscription({ id: request.id, error: reason, sessionId, capture: { blob, ext, retryable: retryableFailure(err) } })
   }
 }
 

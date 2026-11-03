@@ -1084,4 +1084,7 @@ def _build_stt_config(stt_data: dict) -> SttConfig:
         transcribe_languages=_sections._validated_transcribe_languages(
             section.get("transcribe_languages")
         ),
+        openai_base_url=_sections._validated_openai_base_url(section.get("openai_base_url")),
+        openai_model=section.read("openai_model", _safe_str).strip(),
+        openai_prompt=section.read("openai_prompt", _safe_str).strip(),
     )

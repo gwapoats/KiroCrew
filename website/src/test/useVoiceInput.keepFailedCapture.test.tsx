@@ -85,6 +85,12 @@ async function apiError(status: number, message: string) {
   return new ApiError(status, message)
 }
 
+/** An `ApiError` whose JSON body names *code*, the way the gateway refuses. */
+async function codedError(status: number, code: string) {
+  const { ApiError } = await import('../api/apiError')
+  return new ApiError(status, 'advisory English', JSON.stringify({ error: 'advisory English', code }))
+}
+
 type Hook = ReturnType<typeof import('../hooks/useVoiceInput')['useVoiceInput']>
 
 async function mount(onText = vi.fn()) {
@@ -129,6 +135,26 @@ describe('useVoiceInput — a failed transcription keeps the recording', () => {
     act(() => { result.current.keptRecording?.retry() })
     expect(sttTranscribe).toHaveBeenCalledTimes(1)
     expect(result.current.keptRecording).not.toBeNull()
+  })
+
+  it.each([
+    ['stt_openai_unreachable', 'lib.sttProviders.batch_error_server_unreachable'],
+    ['stt_openai_timeout', 'lib.sttProviders.batch_error_server_timeout'],
+    ['stt_openai_auth', 'lib.sttProviders.batch_error_server_auth'],
+  ])('says why when the server failed with %s', async (code, key) => {
+    const { result } = await mount()
+    await dictate(result, await codedError(502, code))
+    const { i18nT } = await import('../i18n/t')
+    expect(result.current.error).toBe(i18nT(key))
+    expect(result.current.error).not.toContain('advisory English')
+    expect(result.current.keptRecording?.retryable).toBe(true)
+  })
+
+  it('keeps the generic sentence for a failure that names no reason', async () => {
+    const { result } = await mount()
+    await dictate(result, await codedError(500, 'stt_transcription_failed'))
+    const { i18nT } = await import('../i18n/t')
+    expect(result.current.error).toBe(i18nT('hooks.useVoiceInput.transcription_request_failed'))
   })
 
   it('a successful retry re-posts the same audio and lands in the owning composer', async () => {

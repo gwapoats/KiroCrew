@@ -41,6 +41,15 @@ describe('SttRetentionNote', () => {
     expect(note.querySelector(`[title="${detail}"]`)).toBeTruthy()
   })
 
+  it('answers that an OpenAI-compatible server keeps what its own rules allow', () => {
+    render(<SttRetentionNote provider="openai" />)
+    const note = screen.getByTestId('stt-retention-note')
+    expect(note.textContent).toContain(i18nT('pages.settings.sttSettings.retention_openai'))
+    expect(note.textContent).toContain('stt.openai_base_url')
+    expect(screen.queryByRole('link')).toBeNull()
+    expect(note.querySelector(`[title="${i18nT('pages.settings.sttSettings.retention_on_device_detail')}"]`)).toBeTruthy()
+  })
+
   it.each(['off', 'unknown'])('renders nothing for %s', provider => {
     const { container } = render(<SttRetentionNote provider={provider} />)
     expect(container.firstChild).toBeNull()
