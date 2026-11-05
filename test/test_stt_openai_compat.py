@@ -7,15 +7,15 @@ sees the request as a real server would and needs no network beyond 127.0.0.1.
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import logging
-import socket
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
-from aiohttp import web
+from aiohttp import ClientConnectorError, web
 from aiohttp.test_utils import TestServer
 from dashboard_handlers_core_coverage_helpers import _req
 
@@ -277,15 +277,24 @@ class TestFailures:
         )
         assert failure.code == openai_compat.CODE_BAD_RESPONSE
 
-    def test_connection_refused(self, tmp_path, no_key) -> None:
-        # A bound socket that never listens refuses the connection, deterministically.
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.bind(("127.0.0.1", 0))
-            port = sock.getsockname()[1]
-            failure = asyncio.run(_fail(_clip(tmp_path), _cfg(f"http://127.0.0.1:{port}/v1")))
+    @pytest.mark.parametrize(
+        "os_error, reason",
+        [
+            (ConnectionRefusedError(errno.ECONNREFUSED, "refused"), "connection refused"),
+            (TimeoutError(60, "Operation timed out"), "ClientConnectorError"),
+        ],
+        ids=["refused", "macos-connect-timeout"],
+    )
+    def test_connection_error(self, tmp_path, no_key, monkeypatch, os_error, reason) -> None:
+        # A non-listening port can time out on macOS; pin the OS error at the HTTP seam.
+        url = "http://127.0.0.1:8000/v1"
+        connection = SimpleNamespace(host="127.0.0.1", port=8000, ssl=False)
+        post = Mock(side_effect=ClientConnectorError(connection, os_error))
+        monkeypatch.setattr(openai_compat.aiohttp.ClientSession, "post", post)
+        failure = asyncio.run(_fail(_clip(tmp_path), _cfg(url)))
         assert failure.code == openai_compat.CODE_UNREACHABLE
-        assert "connection refused" in failure.detail
-        assert f"http://127.0.0.1:{port}" in failure.detail
+        assert failure.detail == f"Could not reach the speech server at {url[:-3]}: {reason}."
+        assert post.call_args.args == (f"{url}/audio/transcriptions",)
 
     def test_timeout(self, tmp_path, no_key) -> None:
         release = asyncio.Event()
