@@ -1412,6 +1412,13 @@ snapshot, so anything the user typed before speaking survives, and the caret doe
 not jump. The snapshot clears on the final, so the next utterance starts from the
 newly committed text.
 
+## Native Apple test fixtures
+
+The native Apple end-to-end fixtures prefer the installed en_US Samantha voice,
+including its localized parenthesized display label from `say -v '?'`. The full
+display name is passed back to `say`; an alphabetical fallback can select Albert
+even when Samantha is installed, making the synthetic recording hard to recognize.
+
 ## OpenAI-compatible server (`openai`)
 
 `stt/openai_compat.py` posts one recording to `<stt.openai_base_url>/audio/transcriptions`
@@ -1456,6 +1463,11 @@ the code to a translated sentence (`lib/sttProviders.ts` `BATCH_ERROR_CODE_KEY`)
 | `stt_openai_bad_response` | 502 | a 2xx without a JSON `text` string |
 | `stt_openai_audio_too_large` | 413 | a file over 25 MB from a caller other than the dashboard, which caps uploads itself |
 | `stt_openai_not_configured` | 503 | a caller that skipped the availability check, or a configuration that changed after it |
+
+Connection-error tests inject `ClientConnectorError` with both a refused connection
+and a macOS errno-60 timeout. Both remain `stt_openai_unreachable`; a request deadline
+is tested separately as `stt_openai_timeout`. A non-listening loopback socket does
+not guarantee `ConnectionRefusedError` on every host.
 
 ## Registered providers
 

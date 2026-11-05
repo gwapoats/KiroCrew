@@ -1797,9 +1797,9 @@ def _en_us_say_voice(listing: str) -> str | None:
         fields = line.split("#", 1)[0].split()
         if len(fields) >= 2 and fields[-1] == "en_US":
             voices.append(" ".join(fields[:-1]))
-    if _PREFERRED_SAY_VOICE in voices:
-        return _PREFERRED_SAY_VOICE
-    return voices[0] if voices else None
+    # Localized macOS listings append a language label, even to Samantha's name.
+    preferred = [v for v in voices if v.split(" (", 1)[0] == _PREFERRED_SAY_VOICE]
+    return preferred[0] if preferred else voices[0] if voices else None
 
 
 async def _say_voice_args() -> list[str]:
