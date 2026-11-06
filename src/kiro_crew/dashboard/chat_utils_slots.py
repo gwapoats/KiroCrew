@@ -22,7 +22,7 @@ from dataclasses import dataclass
 
 from aiohttp import web
 
-from kiro_crew.dashboard.state import DashboardState, _ChatSlot, _normalize_slot_key
+from kiro_crew.dashboard.state import DashboardState, SlotOrigin, _ChatSlot, _normalize_slot_key
 from kiro_crew.execution_context import (
     ExecutionContext,
     canonical_memory_mode,
@@ -181,6 +181,12 @@ def subagent_event_slot(parent_session_key: str) -> str:
     return dashboard_slot_key(parent_session_key) or parent_session_key.removeprefix("dashboard:")
 
 
+#: The spellings a cron-born tab has gone by: ``cron-<job_id>`` since
+#: :mod:`~kiro_crew.dashboard.cron_inject` began minting it that way, and the
+#: folded session key ``cron_<job_id>`` on tabs minted before that spelling.
+_CRON_SLOT_PREFIXES = ("cron-", "cron_")
+
+
 def slot_transcript_key(slot_key: str) -> str:
     """Transcript key for a slot known only by NAME, with no slot object yet.
 
@@ -191,12 +197,27 @@ def slot_transcript_key(slot_key: str) -> str:
     ``.jsonl`` — so the stem already addresses the channel transcript and needs
     no translation.
 
+    A cron tab is the other name that is NOT its transcript's stem. Its
+    conversation belongs to the session ``cron:<job_id>``, whose file
+    ``_safe_key`` folds to ``cron_<job_id>.jsonl``, while the tab itself goes by
+    ``cron-<job_id>`` (or ``cron_<job_id>`` on a tab minted before that
+    spelling). Prefixing either name with ``dashboard:`` asks for
+    ``dashboard_cron-<job_id>.jsonl`` — a file nothing has ever written — so the
+    restore read missed, the tab vanished from the sidebar on every restart with
+    nothing counted and no line logged, and an unbound remint then sent its saves
+    to that phantom transcript. Folding the name onto the session's own stem
+    restores the tab with its conversation intact and bound to ``cron:<job_id>``
+    from its own metadata line.
+
     This resolves the FILE only. The session key cannot be recovered this way
     (``_safe_key`` folds every ``:`` to ``_``, so ``discord_a_b_c`` is ambiguous)
     and is read back from the persisted ``linked_session_key`` instead.
     """
     if is_channel_session_key(slot_key):
         return slot_key
+    for prefix in _CRON_SLOT_PREFIXES:
+        if slot_key.startswith(prefix):
+            return f"cron_{slot_key[len(prefix) :]}"
     return _history_key_for(slot_key)
 
 
@@ -229,13 +250,22 @@ def slot_history_key(slot: _ChatSlot) -> str:
     conversation (``surface_channel_session``, the restore, a History resume)
     set the flag.
 
+    A cron tab reaches the same split whenever it is rebuilt UNBOUND, so the cron
+    leg is gated the same way -- on ``_origin == SlotOrigin.CRON``, stamped by the
+    paths that mint a job's own tab (:func:`~kiro_crew.dashboard.cron_inject.bind_slot`,
+    the cron run routes), never on the ``cron-`` shape of a name. A restored cron
+    tab normally needs neither leg: :func:`slot_transcript_key` now finds its
+    transcript, whose metadata line carries ``linked_session_key``, so it comes
+    back BOUND and the ``linked`` branch above answers first. The restore does not
+    replay ``origin`` itself, so this leg covers a live remint, not a cold one.
+
     Use this wherever a slot is turned into a transcript path; use
     :func:`effective_session_key` where a slot is turned into a session.
     """
     linked = getattr(slot, "linked_session_key", "")
     if linked:
         return linked
-    if getattr(slot, "channel_origin", False):
+    if getattr(slot, "channel_origin", False) or getattr(slot, "_origin", "") == SlotOrigin.CRON:
         return slot_transcript_key(slot.key)
     return _history_key_for(slot.key)
 
