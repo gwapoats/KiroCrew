@@ -107,7 +107,10 @@ class TestA2OneSessionOneTranscript:
     def test_the_tab_is_bound_to_the_channel_session(self, state, log):
         _write_transcript(Path(log._dir), SLACK_STEM, _turns(4))
         slot = surface_channel_session(
-            state, {"key": SLACK_STEM, "modified": 100.0}, {}, log.read_messages(SLACK_STEM),
+            state,
+            {"key": SLACK_STEM, "modified": 100.0},
+            {},
+            log.read_messages(SLACK_STEM),
             session_key=SLACK_KEY,
         )
         assert slot is not None
@@ -118,7 +121,10 @@ class TestA2OneSessionOneTranscript:
     def test_the_tab_writes_the_channel_transcript_not_a_copy(self, state, log):
         _write_transcript(Path(log._dir), SLACK_STEM, _turns(4))
         slot = surface_channel_session(
-            state, {"key": SLACK_STEM, "modified": 100.0}, {}, log.read_messages(SLACK_STEM),
+            state,
+            {"key": SLACK_STEM, "modified": 100.0},
+            {},
+            log.read_messages(SLACK_STEM),
             session_key=SLACK_KEY,
         )
         # _safe_key is what turns a session key into a filename; the bound key
@@ -130,7 +136,10 @@ class TestA2OneSessionOneTranscript:
         """A9 — multi-colon keys are the case a derived key gets wrong."""
         _write_transcript(Path(log._dir), DISCORD_STEM, _turns(2))
         slot = surface_channel_session(
-            state, {"key": DISCORD_STEM, "modified": 100.0}, {}, log.read_messages(DISCORD_STEM),
+            state,
+            {"key": DISCORD_STEM, "modified": 100.0},
+            {},
+            log.read_messages(DISCORD_STEM),
             session_key=DISCORD_KEY,
         )
         assert slot is not None
@@ -141,7 +150,9 @@ class TestA2OneSessionOneTranscript:
         """Binding to a guessed key would answer the user from a dead session."""
         _write_transcript(Path(log._dir), "slack_9999.0", _turns(2))
         slot = surface_channel_session(
-            state, {"key": "slack_9999.0", "modified": 100.0}, {},
+            state,
+            {"key": "slack_9999.0", "modified": 100.0},
+            {},
             log.read_messages("slack_9999.0"),
             session_key="",
         )
@@ -155,7 +166,10 @@ class TestA3FullHistoryIsReachable:
     def test_a_62_message_thread_seeds_all_62(self, state, log):
         _write_transcript(Path(log._dir), SLACK_STEM, _turns(62))
         slot = surface_channel_session(
-            state, {"key": SLACK_STEM, "modified": 100.0}, {}, log.read_messages(SLACK_STEM),
+            state,
+            {"key": SLACK_STEM, "modified": 100.0},
+            {},
+            log.read_messages(SLACK_STEM),
             session_key=SLACK_KEY,
         )
         assert slot is not None
@@ -165,7 +179,10 @@ class TestA3FullHistoryIsReachable:
     def test_beyond_the_window_the_remainder_is_accounted_as_frozen_prefix(self, state, log):
         _write_transcript(Path(log._dir), SLACK_STEM, _turns(700))
         slot = surface_channel_session(
-            state, {"key": SLACK_STEM, "modified": 100.0}, {}, log.read_messages(SLACK_STEM),
+            state,
+            {"key": SLACK_STEM, "modified": 100.0},
+            {},
+            log.read_messages(SLACK_STEM),
             session_key=SLACK_KEY,
         )
         assert slot is not None
@@ -180,7 +197,10 @@ class TestA4TheTabStaysCurrent:
     def test_a_later_channel_turn_lands_in_the_window(self, state, log):
         _write_transcript(Path(log._dir), SLACK_STEM, _turns(4))
         slot = surface_channel_session(
-            state, {"key": SLACK_STEM, "modified": 100.0}, {}, log.read_messages(SLACK_STEM),
+            state,
+            {"key": SLACK_STEM, "modified": 100.0},
+            {},
+            log.read_messages(SLACK_STEM),
             session_key=SLACK_KEY,
         )
         assert slot is not None and len(slot.messages) == 4
@@ -201,7 +221,10 @@ class TestA4TheTabStaysCurrent:
     def test_a_refresh_is_idempotent(self, state, log):
         _write_transcript(Path(log._dir), SLACK_STEM, _turns(4))
         slot = surface_channel_session(
-            state, {"key": SLACK_STEM, "modified": 100.0}, {}, log.read_messages(SLACK_STEM),
+            state,
+            {"key": SLACK_STEM, "modified": 100.0},
+            {},
+            log.read_messages(SLACK_STEM),
             session_key=SLACK_KEY,
         )
         assert slot is not None
@@ -214,7 +237,10 @@ class TestA4TheTabStaysCurrent:
         """The messages came from the file a save would write back."""
         _write_transcript(Path(log._dir), SLACK_STEM, _turns(4))
         slot = surface_channel_session(
-            state, {"key": SLACK_STEM, "modified": 100.0}, {}, log.read_messages(SLACK_STEM),
+            state,
+            {"key": SLACK_STEM, "modified": 100.0},
+            {},
+            log.read_messages(SLACK_STEM),
             session_key=SLACK_KEY,
         )
         assert slot is not None
@@ -227,7 +253,10 @@ class TestA4TheTabStaysCurrent:
         """Rotation shortens the file; stale counters would duplicate archived history."""
         _write_transcript(Path(log._dir), SLACK_STEM, _turns(700))
         slot = surface_channel_session(
-            state, {"key": SLACK_STEM, "modified": 100.0}, {}, log.read_messages(SLACK_STEM),
+            state,
+            {"key": SLACK_STEM, "modified": 100.0},
+            {},
+            log.read_messages(SLACK_STEM),
             session_key=SLACK_KEY,
         )
         assert slot is not None
@@ -250,7 +279,10 @@ class TestA4TheTabStaysCurrent:
         """Rotation shifts every offset; the counters can still add up."""
         _write_transcript(Path(log._dir), SLACK_STEM, _turns(20))
         slot = surface_channel_session(
-            state, {"key": SLACK_STEM, "modified": 100.0}, {}, log.read_messages(SLACK_STEM),
+            state,
+            {"key": SLACK_STEM, "modified": 100.0},
+            {},
+            log.read_messages(SLACK_STEM),
             session_key=SLACK_KEY,
         )
         assert slot is not None
@@ -268,7 +300,10 @@ class TestA4TheTabStaysCurrent:
         """The alignment check must not rebuild on every pass."""
         _write_transcript(Path(log._dir), SLACK_STEM, _turns(6))
         slot = surface_channel_session(
-            state, {"key": SLACK_STEM, "modified": 100.0}, {}, log.read_messages(SLACK_STEM),
+            state,
+            {"key": SLACK_STEM, "modified": 100.0},
+            {},
+            log.read_messages(SLACK_STEM),
             session_key=SLACK_KEY,
         )
         assert slot is not None
@@ -287,7 +322,10 @@ class TestA4TheTabStaysCurrent:
         state.sessions.set_active_dashboard_slots = MagicMock()
         _write_transcript(Path(log._dir), SLACK_STEM, _turns(2))
         slot = surface_channel_session(
-            state, {"key": SLACK_STEM, "modified": 100.0}, {}, log.read_messages(SLACK_STEM),
+            state,
+            {"key": SLACK_STEM, "modified": 100.0},
+            {},
+            log.read_messages(SLACK_STEM),
             session_key=SLACK_KEY,
         )
         assert slot is not None
