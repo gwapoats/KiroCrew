@@ -23,7 +23,7 @@ from typing import Any
 
 from aiohttp import web
 
-from kiro_crew.dashboard.state import DashboardState, _ChatSlot, _normalize_slot_key
+from kiro_crew.dashboard.state import DashboardState, SlotOrigin, _ChatSlot, _normalize_slot_key
 from kiro_crew.execution_context import (
     ExecutionContext,
     canonical_memory_mode,
@@ -129,12 +129,13 @@ def apply_pending_slot_memory_mode(state: DashboardState, slot: _ChatSlot) -> bo
 # prefix-and-shape check rather than a regex: the repo bans regex matching in
 # product code and the shape is fixed.
 _CRON_SLOT_PREFIX = "cron-"
+_CRON_SLOT_PREFIXES = (_CRON_SLOT_PREFIX, "cron_")
 _JOB_ID_HEX = frozenset("0123456789abcdef")
 
 
 def _cron_job_id(slot_key: str) -> str | None:
-    """The eight-lowercase-hex job id in a ``cron-<job_id>`` slot name, else None."""
-    if not slot_key.startswith(_CRON_SLOT_PREFIX):
+    """The eight-lowercase-hex job id in a current or legacy cron slot name."""
+    if not slot_key.startswith(_CRON_SLOT_PREFIXES):
         return None
     job_id = slot_key[len(_CRON_SLOT_PREFIX) :]
     if len(job_id) == 8 and all(c in _JOB_ID_HEX for c in job_id):
@@ -269,7 +270,7 @@ def slot_transcript_key(slot_key: str) -> str:
     no translation.
 
     A cron-born slot is the same shape of problem the other way round. Its name
-    is ``cron-<job_id>`` (:func:`dashboard_slot_key`), but its conversation runs
+    is ``cron-<job_id>`` (:func:`dashboard_slot_key`) or legacy ``cron_<job_id>``, but its conversation runs
     and is written under the session key ``cron:<job_id>``, whose transcript
     ``history._safe_key`` folds to ``cron_<job_id>.jsonl``. The default
     ``_history_key_for`` would instead prefix ``dashboard:`` and name
@@ -279,7 +280,7 @@ def slot_transcript_key(slot_key: str) -> str:
     ``dashboard_slot_key`` mints) points restore at the file the writer uses.
 
     A cron slot is recognised by the shape of a minted job id,
-    ``cron-<eight lowercase hex>`` (:func:`_cron_job_id`), rather than the
+    ``cron-<eight lowercase hex>`` or its underscore form (:func:`_cron_job_id`), rather than the
     ``cron-`` prefix alone, because ``POST /api/chat/slots`` admits a
     client-chosen name and reserves only ``member-``: a plain dashboard tab
     named ``cron-foo`` must keep resolving to its own ``dashboard_cron-foo.jsonl``,
@@ -329,13 +330,22 @@ def slot_history_key(slot: _ChatSlot) -> str:
     conversation (``surface_channel_session``, the restore, a History resume)
     set the flag.
 
+    A cron tab reaches the same split whenever it is rebuilt UNBOUND, so the cron
+    leg is gated the same way -- on ``_origin == SlotOrigin.CRON``, stamped by the
+    paths that mint a job's own tab (:func:`~kiro_crew.dashboard.cron_inject.bind_slot`,
+    the cron run routes), never on the ``cron-`` shape of a name. A restored cron
+    tab normally needs neither leg: :func:`slot_transcript_key` now finds its
+    transcript, whose metadata line carries ``linked_session_key``, so it comes
+    back BOUND and the ``linked`` branch above answers first. The restore does not
+    replay ``origin`` itself, so this leg covers a live remint, not a cold one.
+
     Use this wherever a slot is turned into a transcript path; use
     :func:`effective_session_key` where a slot is turned into a session.
     """
     linked = getattr(slot, "linked_session_key", "")
     if linked:
         return linked
-    if getattr(slot, "channel_origin", False):
+    if getattr(slot, "channel_origin", False) or getattr(slot, "_origin", "") == SlotOrigin.CRON:
         return slot_transcript_key(slot.key)
     return _history_key_for(slot.key)
 
