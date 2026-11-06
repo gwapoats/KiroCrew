@@ -22,6 +22,7 @@ from kiro_crew.dashboard.channel_slots import (
 from kiro_crew.dashboard.chat_utils import (
     dashboard_slot_key,
     effective_session_key,
+    slot_history_key,
     slot_transcript_key,
     subagent_event_slot,
 )
@@ -368,6 +369,55 @@ class TestSurfaceRegistry:
         set_dashboard_surfaced(())
         assert has_dashboard_surface("dashboard:chat-1-99") is True
         assert has_dashboard_surface(SLACK_KEY) is False
+
+
+class TestCronTabTranscriptKey:
+    """A cron tab's NAME and its transcript's stem are two different strings.
+
+    The conversation lives at ``cron_<job_id>.jsonl`` (``_safe_key`` folds the
+    session key ``cron:<job_id>``), while the tab is minted ``cron-<job_id>``.
+    :func:`slot_transcript_key` used to prefix the NAME with ``dashboard:``,
+    asking for ``dashboard_cron-<job_id>.jsonl`` -- a file nothing ever writes.
+    The restore read then missed for every cron tab at once, and each one fell
+    off the sidebar on restart with nothing counted and no line logged, while an
+    unbound remint went on saving onto that phantom transcript.
+    """
+
+    def test_a_cron_tab_name_folds_onto_its_own_transcript(self):
+        assert slot_transcript_key("cron-188f71e5") == "cron_188f71e5"
+
+    def test_a_legacy_underscore_cron_tab_reaches_the_same_file(self):
+        """Tabs minted before the ``cron-`` spelling carry the folded session key
+        as their name. Both spellings must land on one transcript, or such a tab
+        comes back empty beside its own history."""
+        assert slot_transcript_key("cron_188f71e5") == "cron_188f71e5"
+
+    def test_the_fold_matches_what_the_history_layer_writes(self):
+        """The point of the fold: read path and write path name one file."""
+        assert _safe_key("cron:188f71e5") == slot_transcript_key("cron-188f71e5")
+
+    def test_an_ordinary_dashboard_tab_still_addresses_its_dashboard_key(self):
+        assert slot_transcript_key("chat-7-1793828971") == "dashboard:chat-7-1793828971"
+
+    def test_an_unbound_cron_slot_saves_where_the_restore_reads(self, state):
+        from kiro_crew.dashboard.state import SlotOrigin
+
+        slot = state.get_or_create_slot(name="cron-188f71e5", agent="", linked_session_key="")
+        slot._origin = SlotOrigin.CRON
+        assert slot_history_key(slot) == slot_transcript_key(slot.key)
+
+    def test_a_bound_cron_slot_answers_with_its_session_key_first(self, state):
+        slot = state.get_or_create_slot(
+            name="cron-188f71e5", agent="", linked_session_key="cron:188f71e5"
+        )
+        assert slot_history_key(slot) == "cron:188f71e5"
+
+    def test_a_cron_named_dashboard_slot_keeps_its_own_file(self, state):
+        """A name is not provenance. Only a tab the cron paths minted follows the
+        fold, so a person's chat called ``cron-something`` cannot be steered into
+        a job's transcript and merge two unrelated histories."""
+        slot = state.get_or_create_slot(name="cron-notajob", agent="", linked_session_key="")
+        assert slot_history_key(slot) == "dashboard:cron-notajob"
 
 
 class TestSubagentEventSlotRouting:
