@@ -402,6 +402,8 @@ async def api_agent_catalog(request: web.Request) -> web.Response:
     # roster's default crewmate alias. The picker's "default for new sessions"
     # row reads and writes this one.
     template = default_template(config)
+    from kiro_crew.local_ext.chat_backends import catalog_session_backend  # LOCAL PATCH
+
     return web.json_response(
         {
             "agents": rows,
@@ -411,7 +413,10 @@ async def api_agent_catalog(request: web.Request) -> web.Response:
             # harnesses that refuse such an agent (the badge's condition), and
             # the ones that load it (the badge's remedy). None names a backend
             # here; all come from the registry and harness facts.
-            "session_backend": _session_backend(config, session_key),
+            "session_backend": (  # LOCAL PATCH (local_ext.chat_backends)
+                await catalog_session_backend(state, config, session_key)
+                or _session_backend(config, session_key)
+            ),
             "markdown_refused_backends": _markdown_refused_backends(),
             "markdown_spec_backends": sorted(
                 backend_to_stored(b) for b in ACP_BACKENDS_MARKDOWN_AGENT_SPECS
