@@ -477,6 +477,8 @@ class TestUpstreamSeams:
             ("dashboard/chat_turn/turn_admission.py", "turn_route("),
             ("dashboard/chat_turn/eager_spawn.py", "blocks_prewarm("),
             ("dashboard/chat_turn/model_fallback.py", "backend_override=backend_override"),
+            ("dashboard/chat_api/slot_effort.py", "slot_backend_override("),
+            ("dashboard/handlers/agent_catalog.py", "catalog_session_backend("),
             ("config/validation.py", '"local_ext"'),
         ]:
             assert needle in (root / rel).read_text(encoding="utf-8"), rel

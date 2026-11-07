@@ -56,10 +56,16 @@ async def _configured_backend_for_slot(
     """
     if config is None:
         config = await asyncio.to_thread(KiroCrewConfig.load)
-    return configured_backend_for_session(effective_session_key(slot), config)
+    from kiro_crew.local_ext.chat_backends import slot_backend_override  # LOCAL PATCH
+
+    session_key = effective_session_key(slot)
+    override = await slot_backend_override(config, slot, session_key)
+    return configured_backend_for_session(session_key, config, backend_override=override)
 
 
-def configured_backend_for_session(session_key: str | None, config: Any) -> str:
+def configured_backend_for_session(
+    session_key: str | None, config: Any, *, backend_override: str | None = None
+) -> str:
     """The backend a cold start on *session_key* selects under *config*.
 
     The session's own pick outranks a crewmate's harness pin, which outranks the
