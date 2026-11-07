@@ -57,11 +57,15 @@ async def _configured_backend_for_slot(
     from kiro_crew.members import select_provider_backend
 
     session_key = effective_session_key(slot)
+    from kiro_crew.local_ext.chat_backends import slot_backend_override  # LOCAL PATCH
+
+    _lx = await slot_backend_override(config, slot, session_key)
     return select_provider_backend(
         session_key,
         config.agent.member_acp_backend,
         config.agent.acp_backend,
-        crew_backend=crewmate_backend_pin(config, session_key),
+        backend_override=_lx,
+        crew_backend=crewmate_backend_pin(config, session_key) if _lx is None else None,
     )
 
 
