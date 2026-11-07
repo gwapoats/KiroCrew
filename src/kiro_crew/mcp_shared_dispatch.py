@@ -653,7 +653,11 @@ def _run_stdio_dispatch_loop(
                 )
                 _cancel_deferred(str(cancelled_rid))
         elif method == "tools/list":
-            respond(req_id, {"tools": _listable_tools(_req_caller(params))})
+            # LOCAL PATCH (local_ext.always_load): mark tools Claude Code loads up front.
+            from kiro_crew.local_ext.always_load import pin_listing
+
+            _lx_tools = pin_listing(server_name, _listable_tools(_req_caller(params)))
+            respond(req_id, {"tools": _lx_tools})
         elif method == "ping":
             respond(req_id, {})
         elif method == "tools/call":
