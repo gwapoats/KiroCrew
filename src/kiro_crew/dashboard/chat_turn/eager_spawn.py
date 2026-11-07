@@ -806,7 +806,10 @@ async def _eager_spawn(
             # factory's own selection for this key, and the prefetch allocates
             # with no channel identity.
             from kiro_crew.crewmate_harness import crewmate_backend_pin
+            from kiro_crew.local_ext.chat_backends import blocks_prewarm  # LOCAL PATCH
 
+            if await blocks_prewarm(state, slot, session_key, cfg, bindings):
+                return
             if allow_resume and resume_takes_tool_search_replay(
                 tool_search=cfg.agent.tool_search,
                 backend=select_provider_backend(

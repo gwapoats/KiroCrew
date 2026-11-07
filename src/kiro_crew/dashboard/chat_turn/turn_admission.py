@@ -781,6 +781,10 @@ async def _turn_admit(turn: _ChatTurn) -> _Flow | None:
             "try again in a moment, or restart the gateway."
         )
 
+    # LOCAL PATCH (local_ext.chat_backends): route by agent template; raises (fail closed).
+    from kiro_crew.local_ext.chat_backends import turn_route
+
+    _lx = await turn_route(state, slot, session_key, loaded_cfg, kiro_agent, execution_context)
     state.broadcast_ws(
         "activity_event", {"slot": slot.key, "kind": "status", "text": "Creating session…"}
     )
@@ -800,6 +804,7 @@ async def _turn_admit(turn: _ChatTurn) -> _Flow | None:
             session_key,
             agent=kiro_agent or slot.agent or None,
             crew_agent=crew_alias,
+            **_lx,  # LOCAL PATCH (local_ext.chat_backends)
         )
     # Commit a pending session_set_model pick before get_or_create reads
     # slot.model. The pick's authorization is re-checked in the same
@@ -922,6 +927,7 @@ async def _turn_admit(turn: _ChatTurn) -> _Flow | None:
         reasoning_effort_override=slot.reasoning_effort or None,
         start_priority=_turn_priority,
         **_app_allocation_kwargs(slot),
+        **_lx,  # LOCAL PATCH (local_ext.chat_backends): backend_override
     )
     if _app_launch_agent:
         # An app-owned kiro-cli turn asks kiro-cli for the app's launch copy;
