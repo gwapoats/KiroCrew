@@ -1385,6 +1385,7 @@ async def _consolidate(
     return None
 
 
+@__import__("kiro_crew.bg_quiet", fromlist=["preemptible"]).preemptible  # bg_quiet patch
 async def _call_llm(
     self: HistoryConsolidator, prompt: str, *, memory_store: str = "", session_key: str = ""
 ) -> dict | None:

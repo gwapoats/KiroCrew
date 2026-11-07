@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import asyncio
 
+from kiro_crew.bg_quiet import QuietGate  # bg_quiet patch
+
 _GATE: tuple[asyncio.AbstractEventLoop, asyncio.Semaphore] | None = None
 
 
@@ -19,5 +21,5 @@ def consolidation_pass_gate() -> asyncio.Semaphore:
     global _GATE
     loop = asyncio.get_running_loop()
     if _GATE is None or _GATE[0] is not loop:
-        _GATE = (loop, asyncio.Semaphore(1))
+        _GATE = (loop, QuietGate(1))  # bg_quiet patch
     return _GATE[1]
