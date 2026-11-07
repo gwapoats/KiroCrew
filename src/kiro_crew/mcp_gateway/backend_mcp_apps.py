@@ -263,6 +263,10 @@ async def _maybe_intercept_ui_result(
                 )
             if hidden:
                 self._audit_visibility_withhold(pending, hidden)
+            # LOCAL PATCH (local_ext.always_load): mark tools Claude Code loads up front.
+            from kiro_crew.local_ext.always_load import pin_result
+
+            pin_result(self.pool_key.server_name, result)
             # Passive harvest: tool declarations are the SEP-1865 PRIMARY
             # place a server associates a tool with its ui:// resource (the
             # real pdf-server and Excalidraw declare it ONLY here, not on
