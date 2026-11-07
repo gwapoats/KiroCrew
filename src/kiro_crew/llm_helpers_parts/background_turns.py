@@ -71,6 +71,7 @@ def _raise_if_unfinished(event: object, text: str) -> None:
     raise error
 
 
+@__import__("kiro_crew.bg_quiet", fromlist=["defer"]).defer  # bg_quiet patch
 async def run_bg_oneliner(
     sessions: Any,
     prompt: str,

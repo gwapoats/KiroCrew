@@ -657,3 +657,6 @@ def _init_subagents(self: GatewayOrchestrator) -> None:
     # which runs they are talking about.
     self.sessions.set_child_teardown_handler(self.subagent_mgr)
     self.subagent_mgr.start_reaper()
+    from kiro_crew import bg_quiet  # bg_quiet patch
+
+    bg_quiet.install(self.sessions, self.subagent_mgr)
