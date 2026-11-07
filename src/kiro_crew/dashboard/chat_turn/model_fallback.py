@@ -81,6 +81,7 @@ async def _inherited_default_model(
     *,
     agent: str | None,
     crew_agent: str,
+    backend_override: str | None = None,  # LOCAL PATCH (local_ext.chat_backends)
 ) -> str:
     """The model the session layer would start a new session for *slot* on, or ``""``.
 
@@ -112,6 +113,7 @@ async def _inherited_default_model(
         crew_agent=crew_agent,
         app_name=app_name if isinstance(app_name, str) else "",
         session_key=session_key,
+        backend_override=backend_override,  # LOCAL PATCH (local_ext.chat_backends)
     )
     return resolved or ""
 
