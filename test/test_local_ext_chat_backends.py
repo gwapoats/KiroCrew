@@ -458,9 +458,11 @@ class TestUpstreamSeams:
         assert "backend_override" in inspect.getsource(allocation_identity)
 
     def test_session_model_and_inherited_default_take_the_override(self):
+        from kiro_crew.dashboard.chat_turn.model_fallback import _inherited_default_model
         from kiro_crew.session import _session_model
 
         assert "backend_override" in inspect.signature(_session_model).parameters
+        assert "backend_override" in inspect.signature(_inherited_default_model).parameters
 
     def test_session_manager_lookup_seam(self):
         from kiro_crew.session import SessionManager
@@ -472,6 +474,9 @@ class TestUpstreamSeams:
 
         root = Path(cb.__file__).resolve().parents[1]
         for rel, needle in [
+            ("dashboard/chat_turn/turn_admission.py", "turn_route("),
+            ("dashboard/chat_turn/eager_spawn.py", "blocks_prewarm("),
+            ("dashboard/chat_turn/model_fallback.py", "backend_override=backend_override"),
             ("config/validation.py", '"local_ext"'),
         ]:
             assert needle in (root / rel).read_text(encoding="utf-8"), rel

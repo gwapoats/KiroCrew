@@ -844,6 +844,10 @@ async def _eager_spawn(
             # with no channel identity.
             from kiro_crew.crewmate_harness import crewmate_backend_pin
             from kiro_crew.members import session_backend_pick
+            from kiro_crew.local_ext.chat_backends import blocks_prewarm  # LOCAL PATCH
+
+            if await blocks_prewarm(state, slot, session_key, cfg, bindings):
+                return
 
             pick = session_backend_pick(session_key)
             if allow_resume and resume_takes_tool_search_replay(

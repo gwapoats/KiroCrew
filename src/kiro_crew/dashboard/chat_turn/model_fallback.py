@@ -124,6 +124,7 @@ async def _inherited_default_model(
     *,
     agent: str | None,
     crew_agent: str,
+    backend_override: str | None = None,  # LOCAL PATCH (local_ext.chat_backends)
 ) -> str:
     """The model the session layer would start a new session for *slot* on, or ``""``.
 
@@ -157,7 +158,8 @@ async def _inherited_default_model(
         session_key=session_key,
         # The slot's created-on harness, as the allocation passes it: the
         # default is resolved for that harness, not the configured one.
-        **_slot_backend_allocation_kwargs(slot),
+        backend_override=backend_override
+        or _slot_backend_allocation_kwargs(slot).get("backend_override"),
     )
     return resolved or ""
 

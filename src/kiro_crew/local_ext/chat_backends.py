@@ -134,12 +134,15 @@ def default_backend(cfg: Any, session_key: str) -> str:
 
 def slot_is_routable(state: Any, slot: Any, session_key: str) -> bool:
     """Whether *slot* is an ordinary dashboard chat (in-memory checks only)."""
+    from kiro_crew.agent_sdk.backends import backend_from_stored
     from kiro_crew.members import (
         DM_SLOT_MODE,
         is_crewmate_worker_session,
         is_member_session_key,
     )
 
+    if isinstance(backend_from_stored(getattr(slot, "backend", "") or None), str):
+        return False
     if is_member_session_key(session_key) or is_crewmate_worker_session(session_key):
         return False
     if getattr(slot, "mode", "") == DM_SLOT_MODE:
