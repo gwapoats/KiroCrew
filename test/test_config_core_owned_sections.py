@@ -157,7 +157,9 @@ class TestEveryCoreOwnedKeyHasAReader:
     def test_members_are_exactly_the_documented_readers(self) -> None:
         # Extend this tuple together with validation._CORE_OWNED_TOP_KEYS and
         # add a reader test below; a member with no reader test is a silenced typo.
-        assert validation._CORE_OWNED_TOP_KEYS == frozenset({"voice_reply", "connections"})
+        assert validation._CORE_OWNED_TOP_KEYS == frozenset(
+            {"voice_reply", "connections", "local_ext"}  # LOCAL PATCH: local_ext
+        )
 
     def test_connections_client_id_is_read_by_resolve_oauth_client(self) -> None:
         from kiro_crew.connections.oauth_clients import _config_client_id
