@@ -84,7 +84,9 @@ _APP_OWNED_TOP_KEYS: frozenset = _builtin_config_top_keys()
 #     connections/oauth_clients.py::_config_client_id; the
 #     ``connections.tool_aliases`` gate is read by
 #     agent_materialization/mcp_aliases.py. No SCHEMA_REGISTRY entry.
-_CORE_OWNED_TOP_KEYS: frozenset = frozenset({"voice_reply", "connections"})
+#   * local_ext -- LOCAL PATCH: owner-configured local extensions, read by
+#     kiro_crew/local_ext/ from _extra_sections.
+_CORE_OWNED_TOP_KEYS: frozenset = frozenset({"voice_reply", "connections", "local_ext"})
 
 try:
     import jsonschema
