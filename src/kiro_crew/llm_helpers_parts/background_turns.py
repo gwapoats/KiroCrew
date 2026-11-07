@@ -89,6 +89,7 @@ async def _refuse_while_memory_critical(what: str) -> None:
         raise RuntimeError(f"background helper {what!r} not started: {decision.reason}")
 
 
+@__import__("kiro_crew.bg_quiet", fromlist=["defer"]).defer  # bg_quiet patch
 async def run_bg_oneliner(
     sessions: Any,
     prompt: str,
