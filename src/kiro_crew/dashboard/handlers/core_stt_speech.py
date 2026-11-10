@@ -436,7 +436,17 @@ async def api_stt_transcribe(request: web.Request) -> web.Response:
     import uuid
 
     from kiro_crew.dashboard import part_stream
-    from kiro_crew.transcribe import last_failure, transcribe_audio  # noqa: F811
+    from kiro_crew.transcribe import (  # noqa: F811
+        ensure_failure_slot,
+        last_failure,
+        transcribe_audio,
+    )
+
+    # Open the request's failure box here, in the task that reads it back. From
+    # v0.12.1 the transcription below runs inside a task asyncio spawns (to
+    # cancel it when the uploader disconnects), and a ContextVar written inside
+    # that task never reaches this one; a box seeded before it is shared instead.
+    ensure_failure_slot()
 
     cfg = KiroCrewConfig.load()
     # Off the loop: every provider branch of the probe reaches the filesystem, and
