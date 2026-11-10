@@ -406,15 +406,47 @@ def _redact_transcript(transcript: str) -> str:
     return transcript
 
 
-#: Why the last :func:`transcribe_audio` in this task returned None, when its provider said.
-_LAST_FAILURE: contextvars.ContextVar[SttRequestError | None] = contextvars.ContextVar(
+class _FailureSlot:
+    """A mutable one-error box that survives a child task's context copy.
+
+    ``ContextVar.set`` inside a task asyncio created is invisible to the outer
+    task (each copied the context at creation), and the STT endpoint runs the
+    transcription inside exactly such a task to cancel it when the uploader
+    disconnects. Seeding this box with :func:`ensure_failure_slot` *before* the
+    task is created lets the child's write reach the outer reader, while every
+    request keeps its own box.
+    """
+
+    __slots__ = ("error",)
+
+    def __init__(self) -> None:
+        self.error: SttRequestError | None = None
+
+
+#: Why the last :func:`transcribe_audio` in this context returned None, when its provider said.
+_LAST_FAILURE: contextvars.ContextVar[_FailureSlot | None] = contextvars.ContextVar(
     "kiro_crew_transcribe_last_failure", default=None
 )
 
 
+def ensure_failure_slot() -> _FailureSlot:
+    """This context's failure box, created when absent.
+
+    Callers that await :func:`transcribe_audio` inside a newly created task must
+    call this in the parent first; without a seeded box the child's failure
+    reason cannot cross back.
+    """
+    slot = _LAST_FAILURE.get()
+    if slot is None:
+        slot = _FailureSlot()
+        _LAST_FAILURE.set(slot)
+    return slot
+
+
 def last_failure() -> SttRequestError | None:
-    """The reason the last :func:`transcribe_audio` call in this task failed, if known."""
-    return _LAST_FAILURE.get()
+    """The reason the last :func:`transcribe_audio` call in this context failed, if known."""
+    slot = _LAST_FAILURE.get()
+    return slot.error if slot is not None else None
 
 
 async def transcribe_audio(audio_path: str, stt_config=None) -> str | None:  # type: ignore[no-untyped-def]
@@ -434,7 +466,7 @@ async def transcribe_audio(audio_path: str, stt_config=None) -> str | None:  # t
     The channel adapters test truthiness, so ``""`` and None read the same
     there; the distinction is for callers that can tell the user which it was.
     """
-    _LAST_FAILURE.set(None)
+    ensure_failure_slot().error = None
     if stt_config is None:
         stt_config = await asyncio.to_thread(_load_stt_config)
 
@@ -458,7 +490,7 @@ async def transcribe_audio(audio_path: str, stt_config=None) -> str | None:  # t
             result = await transcribe_openai(audio_path, stt_config)
         except SttRequestError as exc:
             logger.warning("STT provider 'openai' failed (%s): %s", exc.code, exc.detail)
-            _LAST_FAILURE.set(exc)
+            ensure_failure_slot().error = exc
             return None
         except Exception:
             logger.warning("STT provider 'openai' failed to transcribe", exc_info=True)

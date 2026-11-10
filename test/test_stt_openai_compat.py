@@ -348,8 +348,8 @@ class TestBatchEndpoint:
         monkeypatch.setattr(core_mod, "batch_duration_cap_secs", lambda _cfg: None)
 
         async def refused(_path, _cfg):
-            transcribe._LAST_FAILURE.set(
-                openai_compat.SttRequestError(openai_compat.CODE_TIMEOUT, "too slow", 504)
+            transcribe.ensure_failure_slot().error = openai_compat.SttRequestError(
+                openai_compat.CODE_TIMEOUT, "too slow", 504
             )
             return None
 
