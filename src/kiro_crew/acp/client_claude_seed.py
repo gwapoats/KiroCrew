@@ -318,11 +318,15 @@ def _render_claude_settings_payload(self: ClaudeAcpClient) -> str:
     # model), which a ``model`` key never does.
     allowlist = model_registry.seed_available_models(self._model_registry_namespace)
     if allowlist:
-        if other_sources_define_available_models(Path(self._work_dir)):
+        # LOCAL PATCH: both probes must read the same Claude profile.
+        from kiro_crew.local_ext.claude_profiles import session_config_dir
+
+        config_dir = session_config_dir(self)
+        if other_sources_define_available_models(Path(self._work_dir), config_dir=config_dir):
             # The adapter gives each literal entry one picker row, while the CLI
             # also allows the newer models a version prefix covers. Naming the
             # ones the user's own settings route keeps the two pickers equal.
-            covered = user_models_a_family_entry_covers()
+            covered = user_models_a_family_entry_covers(config_dir=config_dir)
             data["availableModels"] = [*allowlist, *(m for m in covered if m not in allowlist)]
         else:
             logger.info(
