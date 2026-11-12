@@ -1,6 +1,8 @@
 """LOCAL PATCH: ``kiro_crew.local_ext.chat_backends`` -- dashboard chats routed by template.
 
-Unit tests of the module's decisions, plus "seam canaries" that pin the upstream
+Unit tests of the module's decisions; real runs of a dashboard turn and of the
+prewarm, which is where the call sites in the turn's own files are checked (by what
+they do, not by how they are spelled); and "seam canaries" that pin the upstream
 names the patch leans on, so a rebase onto a release that moved one fails here
 first rather than silently routing nothing.
 """
@@ -10,16 +12,31 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
+from eager_spawn_helpers import _cfg as _eager_cfg
+from eager_spawn_helpers import (  # noqa: F401 -- fixtures are used by name
+    _isolate_armed_registry,
+    _mock_state,
+    _pin_prewarm_allowance,
+)
+from turn_harness import ScriptedProvider, TurnScript, run_turn
 
 from kiro_crew.agent_sdk import backends as _backends
 from kiro_crew.agent_sdk.capabilities import capabilities_for
+from kiro_crew.config.loader import KiroCrewAgentConfig, KiroCrewConfig, ResolvedBindings
 from kiro_crew.crewmate_harness import CrewmateHarnessUnavailable
+from kiro_crew.dashboard import chat_runner
+from kiro_crew.dashboard.state import _ChatSlot
+from kiro_crew.execution_context import ExecutionContext, MemoryStoreRef
 from kiro_crew.local_ext import chat_backends as cb
 
 TEMPLATE_KEY = "dashboard:chat-1"
+#: The template the turn harness's default slot runs.
+TEMPLATE = "kirocrew"
 
 
 def _cfg(agents=None, *, configured=True, default="claude", member="kas", agents_cfg=None):
@@ -440,6 +457,131 @@ class TestConfigSection:
         assert any("local_ext" in r.getMessage() for r in caplog.records)
 
 
+# ── real runs: the production turn and prewarm, with only the provider scripted ─
+
+
+class _ClaudeProvider(ScriptedProvider):
+    capabilities = capabilities_for(_backends.ACP_BACKEND_CLAUDE)
+
+
+def _turn_config(routes, *, default="claude"):
+    return {
+        "agent": {"acp_backend": default},
+        "local_ext": {"chat_backends": {"agents": routes}},
+    }
+
+
+def _template_bindings(agent):
+    return ResolvedBindings(
+        workspace_dir=Path("workspace"),
+        effective_memory_config={},
+        kiro_agent=agent,
+        model="",
+        resolved_alias=agent,
+        requested_resolved=True,
+        memory_store_name="default",
+        selection_kind="template",
+        execution_context=ExecutionContext(
+            None, MemoryStoreRef("default"), "template", agent, selection_name=agent
+        ),
+    )
+
+
+def _error_rows(record):
+    return [str(row.get("content")) for row in record.window if row.get("role") == "error"]
+
+
+class TestRealRuns:
+    @pytest.mark.asyncio
+    async def test_a_routed_turn_allocates_on_the_route(self):
+        record = await run_turn(
+            TurnScript(message="hello", provider=_ClaudeProvider),
+            config=_turn_config({TEMPLATE: "codex"}),
+        )
+        assert [call.kwargs.get("agent") for call in record.allocations] == [TEMPLATE]
+        assert record.allocations[0].kwargs.get("backend_override") == "codex"
+        assert _error_rows(record) == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("routes", [{"another-template": "codex"}, {TEMPLATE: "claude"}])
+    async def test_an_unrouted_turn_allocates_as_upstream_does(self, routes):
+        record = await run_turn(
+            TurnScript(message="hello", provider=_ClaudeProvider), config=_turn_config(routes)
+        )
+        assert [call.kwargs.get("agent") for call in record.allocations] == [TEMPLATE]
+        assert "backend_override" not in record.allocations[0].kwargs
+
+    @pytest.mark.asyncio
+    async def test_a_broken_route_ends_the_turn_before_any_session(self):
+        record = await run_turn(
+            TurnScript(message="hello", provider=_ClaudeProvider),
+            config=_turn_config({TEMPLATE: "goose"}),
+        )
+        assert record.allocations == []
+        (row,) = _error_rows(record)
+        assert row.startswith("chat_backend_unavailable:")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("routes", "prewarmed"),
+        [
+            (None, 1),
+            ({"another-template": "codex"}, 1),
+            ({"codex-coder": "claude"}, 1),
+            ({"codex-coder": "codex"}, 0),
+            ({"codex-coder": "goose"}, 0),
+        ],
+    )
+    async def test_the_prewarm_leaves_a_routed_chat_to_its_first_turn(
+        self, tmp_path, routes, prewarmed
+    ):
+        slot = _ChatSlot("t1")
+        slot.agent = "codex-coder"
+        slot.project = str(tmp_path)
+        state = _mock_state(slot)
+        state.sessions.get_mirror_link = MagicMock(return_value=None)
+        loader = _eager_cfg(True)
+        loader.return_value.agent.acp_backend = "claude"
+        if routes is not None:
+            loader.return_value._extra_sections = {
+                "local_ext": {"chat_backends": {"agents": routes}}
+            }
+        with (
+            patch.object(chat_runner.KiroCrewConfig, "load", loader),
+            patch.object(
+                chat_runner,
+                "resolve_agent_bindings",
+                return_value=_template_bindings("codex-coder"),
+            ),
+        ):
+            await chat_runner._eager_spawn(state, slot)
+        assert state.sessions.get_or_create.await_count == prewarmed
+
+    @pytest.mark.asyncio
+    async def test_the_inherited_default_model_is_resolved_on_the_route(self, monkeypatch):
+        from kiro_crew import session as session_module
+        from kiro_crew.dashboard.chat_turn.model_fallback import _inherited_default_model
+
+        seen = {}
+
+        def resolver(cfg, agent, **kwargs):
+            seen.update(kwargs, agent=agent)
+            return "routed-default"
+
+        monkeypatch.setattr(session_module, "_session_model", resolver)
+        sessions = SimpleNamespace(_cfg=KiroCrewConfig(agents={"default": KiroCrewAgentConfig()}))
+        got = await _inherited_default_model(
+            sessions,
+            _slot(),
+            TEMPLATE_KEY,
+            agent="codex-coder",
+            crew_agent="",
+            backend_override="codex",
+        )
+        assert got == "routed-default"
+        assert seen["backend_override"] == "codex" and seen["agent"] == "codex-coder"
+
+
 # ── seam canaries: the upstream names this patch depends on ──────────────────
 
 
@@ -470,13 +612,9 @@ class TestUpstreamSeams:
         assert callable(getattr(SessionManager, "_fold_key", None))
 
     def test_call_sites_are_present(self):
-        from pathlib import Path
-
+        # The three call sites in the turn's own files are covered by TestRealRuns.
         root = Path(cb.__file__).resolve().parents[1]
         for rel, needle in [
-            ("dashboard/chat_turn/turn_admission.py", "turn_route("),
-            ("dashboard/chat_turn/eager_spawn.py", "blocks_prewarm("),
-            ("dashboard/chat_turn/model_fallback.py", "backend_override=backend_override"),
             ("dashboard/chat_api/slot_effort.py", "slot_backend_override("),
             ("dashboard/handlers/agent_catalog.py", "catalog_session_backend("),
             ("config/validation.py", '"local_ext"'),
