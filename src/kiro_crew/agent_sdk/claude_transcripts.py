@@ -147,3 +147,10 @@ __all__ = [
     "delete_claude_session_files",
     "is_claude_provider_label",
 ]
+
+# LOCAL PATCH (local_ext.claude_profile_dirs): a session of a Claude profile keeps its
+# store under the profile's own config directory, so both look there as well.
+from kiro_crew.local_ext import claude_profile_dirs as _lx_dirs  # noqa: E402
+
+claude_session_dir = _lx_dirs.first_existing_config_dir(claude_session_dir)
+delete_claude_session_files = _lx_dirs.every_config_dir(delete_claude_session_files)

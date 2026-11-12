@@ -25,6 +25,12 @@ def claude_config_dir() -> Path | None:
     The resolution the ``claude`` CLI itself makes (``CLAUDE_CONFIG_DIR``, else
     ``~/.claude``), read in the gateway because the child inherits its environment.
     """
+    # LOCAL PATCH (local_ext.claude_profile_dirs): a caller walking a profile's directory.
+    from kiro_crew.local_ext.claude_profile_dirs import walked_config_dir
+
+    walked = walked_config_dir()
+    if walked is not None:
+        return walked
     override = os.environ.get("CLAUDE_CONFIG_DIR")
     if override:
         return Path(override)

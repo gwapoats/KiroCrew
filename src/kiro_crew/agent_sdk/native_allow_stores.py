@@ -132,7 +132,10 @@ def _stores() -> tuple[NativeAllowStore, ...]:
 
 def home_leaves() -> tuple[str, ...]:
     """Every entry's ``$HOME``-relative leaf, for the write-protected list."""
-    return tuple(dict.fromkeys(store.leaf for store in _stores()))
+    # LOCAL PATCH (local_ext.claude_profile_dirs): a Claude profile's settings files too.
+    from kiro_crew.local_ext.claude_profile_dirs import SETTINGS_LEAVES as profile_leaves
+
+    return tuple(dict.fromkeys(store.leaf for store in _stores())) + tuple(profile_leaves)
 
 
 def override_anchored_leaves() -> tuple[tuple[str, tuple[str, ...], str], ...]:

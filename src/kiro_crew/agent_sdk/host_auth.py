@@ -865,9 +865,12 @@ def credential_leaves() -> Tuple[str, ...]:
     claude's ``settings*.json`` -- are deliberately absent and stay readable:
     routing diagnosis needs them and they carry no credential.
     """
+    # LOCAL PATCH (local_ext.claude_profile_dirs): a Claude profile's token file too.
+    from kiro_crew.local_ext.claude_profile_dirs import CREDENTIAL_LEAVES as profile_leaves
+
     return tuple(
         leaf for declaration in AGENT_AUTH_DECLARATIONS for leaf in declaration.credential_leaves
-    )
+    ) + tuple(profile_leaves)
 
 
 def home_override_env_vars() -> Tuple[str, ...]:

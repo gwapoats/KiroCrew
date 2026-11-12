@@ -304,7 +304,13 @@ def _render_claude_settings_payload(self: AcpClient) -> str:
     # model), which a ``model`` key never does.
     allowlist = model_registry.seed_available_models(self._model_registry_namespace)
     if allowlist:
-        if other_sources_define_available_models(Path(self._work_dir)):
+        # LOCAL PATCH (local_ext.claude_profiles): a profile's session reads the
+        # profile's own user settings, not ``~/.claude``'s.
+        from kiro_crew.local_ext.claude_profiles import session_config_dir
+
+        if other_sources_define_available_models(
+            Path(self._work_dir), config_dir=session_config_dir(self)
+        ):
             data["availableModels"] = allowlist
         else:
             logger.info(
