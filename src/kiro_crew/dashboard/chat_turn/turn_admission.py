@@ -927,7 +927,7 @@ async def _turn_admit(turn: _ChatTurn) -> _Flow | None:
         reasoning_effort_override=slot.reasoning_effort or None,
         start_priority=_turn_priority,
         **_app_allocation_kwargs(slot),
-        **_lx,  # LOCAL PATCH (local_ext.chat_backends): backend_override
+        **_lx.allocation,  # LOCAL PATCH (local_ext.chat_backends): backend_override, extra_env
     )
     if _app_launch_agent:
         # An app-owned kiro-cli turn asks kiro-cli for the app's launch copy;

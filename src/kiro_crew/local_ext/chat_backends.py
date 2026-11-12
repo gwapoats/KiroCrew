@@ -26,8 +26,12 @@ Rules (the ones upstream's per-chat backend review settled on):
   the claim, so the turn cold-starts on the right harness (Crew replays the
   transcript into it). For a chat with no route this happens only to a session
   this route started, so an unrouted chat keeps upstream behaviour exactly.
-* With no ``local_ext.chat_backends`` object in the config, every function here
-  answers "nothing to do".
+* A template may also name a Claude profile (:mod:`kiro_crew.local_ext.claude_profiles`,
+  which states its own rules). It rides the same three call sites: the turn's
+  allocation gains the profile's ``extra_env``, the prewarm is left to the first
+  turn, and a live session under another Claude config directory is reset.
+* With neither a ``local_ext.chat_backends`` nor a ``local_ext.claude_profiles``
+  object in the config, every function here answers "nothing to do".
 """
 
 from __future__ import annotations
@@ -37,6 +41,15 @@ import logging
 from typing import Any
 
 from kiro_crew.crewmate_harness import CrewmateHarnessUnavailable
+from kiro_crew.local_ext.claude_profile_dirs import CONFIG_DIR_ENV
+from kiro_crew.local_ext.claude_profiles import (
+    ClaudeProfileUnavailable,
+    agent_profiles,
+    ensure_startable,
+    profile_env,
+    profile_for_template,
+    stamped_config_dir,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -204,39 +217,79 @@ def stamped_override(sessions: Any, session_key: str) -> str | None:
     return value if isinstance(value, str) else None
 
 
+#: ``reset_if_mismatched``'s "Claude profiles are off, do not compare" argument.
+_NO_PROFILES: Any = object()
+
+
 def reset_if_mismatched(
-    state: Any, slot: Any, session_key: str, route: str | None, default: str
+    state: Any,
+    slot: Any,
+    session_key: str,
+    route: str | None,
+    default: str,
+    *,
+    config_dir: Any = _NO_PROFILES,
 ) -> bool:
-    """Arm the turn's pre-claim reset when the live session runs the wrong backend.
+    """Arm the turn's pre-claim reset when the live session runs on the wrong harness.
 
     The consume right before the claim (``_consume_pending_reset``) performs it, so
     the turn cold-starts on the right harness. Returns whether it armed.
+
+    *config_dir*, handed over only while Claude profiles are configured, is the
+    Claude config directory the chat should run under (``None`` for the default).
+    A live session allocated under another one is on the wrong account, so it is
+    reset the same way; only this module's allocations carry that stamp, so a chat
+    with no profile is moved only when a profile started its session.
     """
     sessions = getattr(state, "sessions", None)
     provider = sessions.get_provider(session_key) if sessions is not None else None
     live = live_backend(provider) if provider is not None else None
     if live is None:
         return False
+    should = route if route is not None else default
     if route is not None:
         wrong = live != route
     else:
         # No route: only a session a route started is ours to move back.
         wrong = stamped_override(sessions, session_key) is not None and live != default
+    what = f"runs {live!r}, should run {should!r}"
+    if not wrong and config_dir is not _NO_PROFILES:
+        wrong = stamped_config_dir(sessions, session_key) != config_dir
+        what = "runs under another Claude config directory than " + (
+            "its profile's" if config_dir else "the default"
+        )
     if not wrong:
         return False
     from kiro_crew.dashboard.session_control import arm_model_switch_reset
 
     logger.info(
-        "local_ext.chat_backends: slot %s live session runs %r, should run %r; resetting",
+        "local_ext.chat_backends: slot %s live session %s; resetting",
         getattr(slot, "key", "?"),
-        live,
-        route if route is not None else default,
+        what,
     )
     arm_model_switch_reset(state, slot)
     return True
 
 
 # ── call sites ───────────────────────────────────────────────────────────────
+
+
+class TurnKwargs(dict):
+    """What :func:`turn_route` answers, for the two call sites that spread it.
+
+    The mapping itself is what both take: ``{}`` or ``{"backend_override": <id>}``,
+    read by the model ladder (``_inherited_default_model``) and by the allocation.
+    :attr:`allocation` is the mapping plus what only ``get_or_create`` accepts (a
+    Claude profile's ``extra_env``), so the allocation spreads that instead.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.allocation_only: dict[str, Any] = {}
+
+    @property
+    def allocation(self) -> dict[str, Any]:
+        return {**self, **self.allocation_only}
 
 
 async def turn_route(
@@ -246,48 +299,74 @@ async def turn_route(
     cfg: Any,
     agent: str | None,
     execution_context: Any,
-) -> dict[str, str]:
+) -> TurnKwargs:
     """Dashboard turn admission: the extra allocation kwargs for this turn.
 
     ``{}`` (no route, or the route names the backend the chat gets anyway, so the
-    warm pool stays usable) or ``{"backend_override": <id>}``. Also arms the reset
-    of a live session on the wrong backend. Raises :class:`ChatBackendUnavailable`
-    for a route that cannot start, before any session is claimed.
+    warm pool stays usable) or ``{"backend_override": <id>}``; a template with a
+    Claude profile also carries ``extra_env`` in :attr:`TurnKwargs.allocation`.
+    Also arms the reset of a live session on the wrong backend or under the wrong
+    Claude config directory. Raises :class:`ChatBackendUnavailable` for a route,
+    and :class:`~kiro_crew.local_ext.claude_profiles.ClaudeProfileUnavailable`
+    for a profile, that cannot start, before any session is claimed.
     """
-    if cfg is None or agent_routes(cfg) is None:
-        return {}
+    profiles_on = cfg is not None and agent_profiles(cfg) is not None
+    if cfg is None or (agent_routes(cfg) is None and not profiles_on):
+        return TurnKwargs()
     if not execution_is_template(execution_context) or not await _routable(
         state, slot, session_key
     ):
-        return {}
-    route = route_for_template(cfg, agent or getattr(slot, "agent", "") or None)
+        return TurnKwargs()
+    template = agent or getattr(slot, "agent", "") or None
+    route = route_for_template(cfg, template)
     default = default_backend(cfg, session_key)
-    reset_if_mismatched(state, slot, session_key, route, default)
-    if route is None or route == default:
-        return {}
-    return {"backend_override": route}
+    profile = profile_for_template(cfg, template)
+    env: dict[str, str] | None = None
+    if profile is not None:
+        await ensure_startable(cfg, template or "", profile, default if route is None else route)
+        env = profile_env(profile)
+    if profiles_on:
+        reset_if_mismatched(
+            state, slot, session_key, route, default, config_dir=(env or {}).get(CONFIG_DIR_ENV)
+        )
+    else:
+        reset_if_mismatched(state, slot, session_key, route, default)
+    kwargs = TurnKwargs()
+    if route is not None and route != default:
+        kwargs["backend_override"] = route
+    if env:
+        kwargs.allocation_only["extra_env"] = env
+    return kwargs
 
 
 async def blocks_prewarm(state: Any, slot: Any, session_key: str, cfg: Any, bindings: Any) -> bool:
     """Eager spawn: whether a routed chat must be left to its first real turn.
 
-    The prefetch allocates with no route, so it would register a session on the
-    default backend. A broken route also blocks (the turn reports it).
+    The prefetch allocates with no route and no profile, so it would register a
+    session on the default backend under the default Claude config. A broken
+    route or profile also blocks (the turn reports it).
     """
-    if cfg is None or not agent_routes(cfg):
+    if cfg is None or not (agent_routes(cfg) or agent_profiles(cfg)):
         return False
     execution = getattr(bindings, "execution_context", None)
     if not execution_is_template(execution, getattr(bindings, "selection_kind", "")):
         return False
     if not await _routable(state, slot, session_key):
         return False
+    template = getattr(bindings, "kiro_agent", "") or slot.agent
     try:
-        route = route_for_template(cfg, getattr(bindings, "kiro_agent", "") or slot.agent)
-    except ChatBackendUnavailable:
+        route = route_for_template(cfg, template)
+        profile = profile_for_template(cfg, template)
+    except (ChatBackendUnavailable, ClaudeProfileUnavailable):
         return True
-    blocked = route is not None and route != default_backend(cfg, session_key)
+    blocked = profile is not None or (
+        route is not None and route != default_backend(cfg, session_key)
+    )
     if blocked:
-        logger.info("Eager spawn: %s has a backend route; left to first turn", slot.key)
+        logger.info(
+            "Eager spawn: %s has a backend route or a Claude profile; left to first turn",
+            slot.key,
+        )
     return blocked
 
 
