@@ -806,6 +806,7 @@ if TYPE_CHECKING:  # every owner-defined name in _EXPORTS, for type checkers and
     )
     from kiro_crew.dashboard.chat_utils_slots import (  # noqa: F401
         _CRON_SLOT_PREFIX,
+        _CRON_SLOT_PREFIXES,
         _INCOGNITO_PREFIX,
         _JOB_ID_HEX,
         _PUBLISHED_SLOT_KEYS_LOCK,
@@ -925,6 +926,7 @@ if TYPE_CHECKING:  # names it serves from outside the family, from their homes
         PROMISE_ONLY_RECOVERY_PREFIX,
         REFUSAL_FALLBACK_RECOVERY_PREFIX,
         SUBAGENT_COMPLETION_PREFIXES,
+        SlotOrigin,
         _normalize_slot_key,
     )
     from kiro_crew.execution_context import (  # noqa: F401
