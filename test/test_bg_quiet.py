@@ -11,6 +11,7 @@ import pytest
 
 from kiro_crew import bg_quiet
 from kiro_crew.start_priority import StartPriority
+from kiro_crew.testing.wait import async_wait_until, await_until, finished
 
 QUIET = 0.2
 POLL = 0.02
@@ -76,14 +77,6 @@ def _enable(monkeypatch: pytest.MonkeyPatch, **extra: str) -> tuple[_Sessions, _
     return sessions, subagents
 
 
-async def _until(cond: Callable[[], bool], timeout: float = 5.0) -> None:
-    deadline = time.monotonic() + timeout
-    while not cond():
-        if time.monotonic() > deadline:
-            raise AssertionError("condition not reached")
-        await asyncio.sleep(0.01)
-
-
 def _recording_oneliner() -> tuple[Callable[..., Any], list[str]]:
     calls: list[str] = []
 
@@ -101,7 +94,7 @@ async def test_without_env_the_wrappers_pass_through(monkeypatch: pytest.MonkeyP
     bg_quiet.install(sessions, _Subagents())
     wrapped, calls = _recording_oneliner()
     assert not bg_quiet.enabled()
-    assert await asyncio.wait_for(wrapped(None, "a", sel_source="tips"), 1) == "ok:a"
+    assert await finished(wrapped(None, "a", sel_source="tips"), "the pass-through call") == "ok:a"
     assert calls == ["a"]
 
 
@@ -110,7 +103,7 @@ async def test_not_installed_passes_through(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("KIROCREW_BG_QUIET_SECS", "60")
     wrapped, calls = _recording_oneliner()
     assert not bg_quiet.enabled()
-    assert await asyncio.wait_for(wrapped(None, "a", sel_source="tips"), 1) == "ok:a"
+    assert await finished(wrapped(None, "a", sel_source="tips"), "the pass-through call") == "ok:a"
 
 
 @pytest.mark.asyncio
@@ -124,7 +117,7 @@ async def test_deferred_source_waits_until_quiet(monkeypatch: pytest.MonkeyPatch
     assert not task.done() and calls == []
     chat.active = False
     started = time.monotonic()
-    assert await asyncio.wait_for(task, 5) == "ok:check"
+    assert await await_until(task, what="the deferred call once the chat is idle") == "ok:check"
     assert time.monotonic() - started >= QUIET * 0.9
 
 
@@ -135,12 +128,13 @@ async def test_undeferred_sources_and_foreground_run_at_once(
     sessions, _ = _enable(monkeypatch)
     sessions.add("dashboard:chat-1").active = True
     wrapped, calls = _recording_oneliner()
-    assert await asyncio.wait_for(wrapped(None, "title"), 1) == "ok:title"
-    assert await asyncio.wait_for(wrapped(None, "stt", sel_source="stt_polish"), 1) == "ok:stt"
+    assert await finished(wrapped(None, "title"), "the undeferred title call") == "ok:title"
+    stt = wrapped(None, "stt", sel_source="stt_polish")
+    assert await finished(stt, "the undeferred stt_polish call") == "ok:stt"
     fg = wrapped(
         None, "fg", sel_source="contradiction_check", start_priority=StartPriority.FOREGROUND
     )
-    assert await asyncio.wait_for(fg, 1) == "ok:fg"
+    assert await finished(fg, "the foreground call") == "ok:fg"
     assert calls == ["title", "stt", "fg"]
 
 
@@ -150,12 +144,13 @@ async def test_defer_sources_env_replaces_the_default(monkeypatch: pytest.Monkey
     chat = sessions.add("dashboard:chat-1")
     chat.active = True
     wrapped, _calls = _recording_oneliner()
-    assert await asyncio.wait_for(wrapped(None, "tips", sel_source="tips"), 1) == "ok:tips"
+    tips = wrapped(None, "tips", sel_source="tips")
+    assert await finished(tips, "the tips call no longer deferred") == "ok:tips"
     title = asyncio.ensure_future(wrapped(None, "title"))
     await asyncio.sleep(QUIET * 2)
     assert not title.done()
     chat.active = False
-    assert await asyncio.wait_for(title, 5) == "ok:title"
+    assert await await_until(title, what="the title call once the chat is idle") == "ok:title"
 
 
 @pytest.mark.asyncio
@@ -165,7 +160,7 @@ async def test_background_keys_never_count_as_busy(monkeypatch: pytest.MonkeyPat
         sessions.add(key).active = True
     assert not bg_quiet.foreground_busy()
     wrapped, _calls = _recording_oneliner()
-    assert await asyncio.wait_for(wrapped(None, "t", sel_source="tips"), 5) == "ok:t"
+    assert await finished(wrapped(None, "t", sel_source="tips"), "the deferred call") == "ok:t"
 
 
 @pytest.mark.asyncio
@@ -178,7 +173,7 @@ async def test_running_subagent_counts_as_busy(monkeypatch: pytest.MonkeyPatch) 
     await asyncio.sleep(QUIET * 2)
     assert not task.done()
     subagents.running_count = 0
-    assert await asyncio.wait_for(task, 5) == "ok:t"
+    assert await await_until(task, what="the deferred call once no sub-agent runs") == "ok:t"
 
 
 @pytest.mark.asyncio
@@ -196,8 +191,9 @@ async def test_deferred_calls_run_one_at_a_time(monkeypatch: pytest.MonkeyPatch)
         return prompt
 
     wrapped = bg_quiet.deferred_oneliner(slow)
-    results = await asyncio.wait_for(
-        asyncio.gather(*(wrapped(None, str(i), sel_source="tips") for i in range(4))), 10
+    results = await await_until(
+        asyncio.gather(*(wrapped(None, str(i), sel_source="tips") for i in range(4))),
+        what="the four deferred calls",
     )
     assert results == ["0", "1", "2", "3"]
     assert peak == 1
@@ -209,7 +205,7 @@ async def test_max_defer_runs_anyway(monkeypatch: pytest.MonkeyPatch) -> None:
     sessions.add("dashboard:chat-1").active = True
     wrapped, calls = _recording_oneliner()
     started = time.monotonic()
-    assert await asyncio.wait_for(wrapped(None, "t", sel_source="tips"), 5) == "ok:t"
+    assert await finished(wrapped(None, "t", sel_source="tips"), "the deferred call") == "ok:t"
     assert time.monotonic() - started >= 0.25
 
 
@@ -225,7 +221,7 @@ def _fake_call_llm(consolidate: _Provider, plan: list[str]) -> tuple[Callable[..
         if behaviour == "finish":
             consolidate.active = False
             return {"prompt": prompt, "attempt": len(attempts)}
-        await asyncio.wait_for(consolidate.cancelled.wait(), 5)
+        await await_until(consolidate.cancelled, what="the cancel of the consolidation turn")
         if behaviour == "raise-on-cancel":
             raise RuntimeError("turn ended by cancel")
         return None
@@ -240,13 +236,13 @@ async def test_consolidation_call_is_interrupted_and_rerun(monkeypatch: pytest.M
     chat = sessions.add("dashboard:chat-1")
     wrapped, attempts = _fake_call_llm(consolidate, ["block", "finish"])
     task = asyncio.ensure_future(wrapped(object(), "P", session_key="dashboard:chat-2"))
-    await _until(lambda: consolidate.active)
+    await async_wait_until(lambda: consolidate.active)
     chat.active = True
-    await _until(lambda: consolidate.cancels >= 1)
+    await async_wait_until(lambda: consolidate.cancels >= 1)
     await asyncio.sleep(QUIET)
     assert not task.done()
     chat.active = False
-    result = await asyncio.wait_for(task, 5)
+    result = await await_until(task, what="the rerun consolidation call")
     assert result == {"prompt": "P", "attempt": 2}
     assert attempts == [1, 2]
 
@@ -260,11 +256,11 @@ async def test_an_error_caused_by_the_interrupt_is_not_reported(
     chat = sessions.add("dashboard:chat-1")
     wrapped, attempts = _fake_call_llm(consolidate, ["raise-on-cancel", "finish"])
     task = asyncio.ensure_future(wrapped(object(), "P"))
-    await _until(lambda: consolidate.active)
+    await async_wait_until(lambda: consolidate.active)
     chat.active = True
-    await _until(lambda: consolidate.cancels >= 1)
+    await async_wait_until(lambda: consolidate.cancels >= 1)
     chat.active = False
-    assert (await asyncio.wait_for(task, 5))["attempt"] == 2
+    assert (await await_until(task, what="the rerun consolidation call"))["attempt"] == 2
 
 
 @pytest.mark.asyncio
@@ -276,7 +272,7 @@ async def test_an_error_without_interrupt_propagates(monkeypatch: pytest.MonkeyP
 
     wrapped = bg_quiet.preemptible_consolidation_call(failing)
     with pytest.raises(ValueError):
-        await asyncio.wait_for(wrapped(object(), "P"), 5)
+        await finished(wrapped(object(), "P"), "the failing call")
 
 
 @pytest.mark.asyncio
@@ -288,11 +284,11 @@ async def test_member_consolidation_turns_are_interrupted_too(
     chat = sessions.add("dashboard:chat-1")
     wrapped, attempts = _fake_call_llm(member, ["block", "finish"])
     task = asyncio.ensure_future(wrapped(object(), "P"))
-    await _until(lambda: member.active)
+    await async_wait_until(lambda: member.active)
     chat.active = True
-    await _until(lambda: member.cancels >= 1)
+    await async_wait_until(lambda: member.cancels >= 1)
     chat.active = False
-    assert (await asyncio.wait_for(task, 5))["attempt"] == 2
+    assert (await await_until(task, what="the rerun consolidation call"))["attempt"] == 2
 
 
 @pytest.mark.asyncio
@@ -309,12 +305,12 @@ async def test_preempt_off_lets_the_call_finish(monkeypatch: pytest.MonkeyPatch)
         return "done"
 
     task = asyncio.ensure_future(bg_quiet.preemptible_consolidation_call(call_llm)(object(), "P"))
-    await _until(lambda: consolidate.active)
+    await async_wait_until(lambda: consolidate.active)
     chat.active = True
     await asyncio.sleep(POLL * 10)
     assert consolidate.cancels == 0
     finish.set()
-    assert await asyncio.wait_for(task, 5) == "done"
+    assert await await_until(task, what="the uninterrupted consolidation call") == "done"
 
 
 @pytest.mark.asyncio
@@ -327,7 +323,7 @@ async def test_consolidation_gate_waits_for_quiet(monkeypatch: pytest.MonkeyPatc
     assert isinstance(gate, bg_quiet.QuietGate)
     assert isinstance(gate, asyncio.Semaphore)
     # Off: acquires at once, as stock.
-    await asyncio.wait_for(gate.acquire(), 1)
+    await finished(gate.acquire(), "the pass gate with the quiet gate off")
     gate.release()
     sessions, _ = _enable(monkeypatch)
     chat = sessions.add("dashboard:chat-1")
@@ -337,7 +333,7 @@ async def test_consolidation_gate_waits_for_quiet(monkeypatch: pytest.MonkeyPatc
     assert not waiter.done()
     assert not gate.locked()
     chat.active = False
-    await asyncio.wait_for(waiter, 5)
+    await await_until(waiter, what="the pass gate once the chat is idle")
     assert gate.locked()
     gate.release()
 
