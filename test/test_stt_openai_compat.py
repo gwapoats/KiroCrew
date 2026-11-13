@@ -27,6 +27,7 @@ from kiro_crew.dashboard.handlers import core as core_mod
 from kiro_crew.dashboard.handlers.core_stt_settings import _stt_language_codes
 from kiro_crew.dashboard.stt_stream import streaming_providers
 from kiro_crew.stt import openai_compat
+from kiro_crew.testing.wait import await_until
 
 KEY = "sk-test-openai-compat-0123456789abcdef"
 pytestmark = pytest.mark.timeout(30)
@@ -301,7 +302,7 @@ class TestFailures:
 
         async def stall(request: web.Request) -> web.Response:
             await request.read()
-            await asyncio.wait_for(release.wait(), timeout=10)
+            await await_until(release, what="the test releasing the stalled speech server")
             return web.json_response({"text": "late"})
 
         async def call(url: str):
