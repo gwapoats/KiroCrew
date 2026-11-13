@@ -213,6 +213,12 @@ NON_EGRESS_REDACTION_MODULES: frozenset[str] = frozenset(
         # becomes the failure message that the update paths show on their
         # progress card or print. Scrubbing at capture, not an output boundary.
         "frontend.py",
+        # Same shape for the OpenAI-compatible speech provider: `_excerpt` redacts
+        # the speech server's own error body (a proxy can echo the key it was sent)
+        # before it is cut into the `SttRequestError` detail. The module emits
+        # nothing itself; `transcribe.py` carries the failure to the dashboard's
+        # transcription routes, which report it. Scrubbing at capture.
+        "stt/openai_compat.py",
         # Same shape: redacts the unparseable LLM decomposition response before
         # writing the diagnostic ERROR line to the gateway log. Defensive log
         # hygiene so a response echoing a credential or exfiltration URL cannot
