@@ -20,8 +20,22 @@ Here the list is kept per profile:
   and answers with that profile's sessions, then its snapshot.
 * A chat on ``~/.claude`` reads only default-profile sessions and snapshot.
 
+A model is also kept to the profile that serves it. Claude Code lists a model it
+was handed but does not know as a row named by its id, so a session started on
+another profile's model advertises that model back and it lands in this profile's
+list. A profile's OWN models are therefore the ids it advertised under a name of
+their own (:func:`native_ids`), and a model that is another profile's own and not
+this one's:
+
+* is not handed to a session of this profile: the session starts on its own
+  default (:func:`client_model`, read where the ACP client is built), and a
+  session already running keeps its model (:func:`foreign_to_session`, read by
+  ``model_scope.pin_applies``). The chat's stored pick is left as it is.
+* is not listed in this profile's picker (:func:`own_rows`).
+
 Inert when no profile directory exists on disk and no session carries a profile:
-nothing is recorded and every filter passes every session.
+nothing is recorded and every filter passes every session. The model rules are
+inert while only one profile has advertised a list.
 """
 
 from __future__ import annotations
@@ -43,6 +57,10 @@ logger = logging.getLogger(__name__)
 SEP = "@"
 #: The profile name of ``~/.claude`` in snapshot keys.
 DEFAULT_PROFILE = "default"
+#: The registry namespace Claude Code's ids live in.
+NAMESPACE = "claude_code"
+#: The "no pin" model: the backend picks.
+AUTO = "auto"
 
 
 # ── which profile a session runs on ──────────────────────────────────────────
@@ -127,7 +145,143 @@ def snapshot_rows(namespace: str, profile: str | None) -> list[dict[str, str]] |
     key = snapshot_key(namespace, profile)
     if not model_registry.advertised_models(key):
         return None
-    return model_registry.advertised_model_rows(key)
+    return own_rows(model_registry.advertised_model_rows(key), profile, namespace)
+
+
+# ── which models are a profile's own ─────────────────────────────────────────
+
+
+def _profiles() -> list[str | None]:
+    """Every profile, ``None`` (``~/.claude``) first."""
+    return [None, *PROFILE_DIRS]
+
+
+def _key(model_id: str) -> str:
+    """*model_id* folded like the registry folds an id to match it against a served list."""
+    from kiro_crew import model_registry
+
+    return model_registry._normalize_advertised_key(model_id) or model_id
+
+
+def _listed(model_id: str, ids: Iterable[str]) -> bool:
+    """Whether *model_id* is one of *ids*, in any spelling of the same id."""
+    ids = list(ids)
+    if model_id in ids:
+        return True
+    wanted = _key(model_id)
+    return any(_key(other) == wanted for other in ids)
+
+
+def native_ids(profile: str | None) -> frozenset[str]:
+    """The ids *profile*'s sessions advertised under a name of their own.
+
+    A row named by its id is how Claude Code lists a model it was handed and does
+    not know, so such a row says what the session was given, not what the profile
+    serves. Empty until the profile has advertised a named list.
+    """
+    from kiro_crew import model_registry
+
+    rows = model_registry.advertised_model_rows(snapshot_key(NAMESPACE, profile))
+    return frozenset(
+        row["model_name"]
+        for row in rows
+        if row.get("display_name") and row["display_name"] != row["model_name"]
+    )
+
+
+def _own_elsewhere(model_id: str, profile: str | None) -> str | None:
+    """A profile other than *profile* that serves *model_id* as its own, by snapshot name."""
+    for other in _profiles():
+        if other != profile and _listed(model_id, native_ids(other)):
+            return other or DEFAULT_PROFILE
+    return None
+
+
+def foreign_to(model_id: str, profile: str | None) -> str | None:
+    """The profile *model_id* belongs to when that is not *profile*, else ``None``.
+
+    ``None`` for a model *profile* serves itself and for one no profile claims.
+    A profile that has advertised no named list yet serves nothing known, so a
+    model another profile serves is that profile's until this one lists it: one
+    session on its own default costs less than a session whose every turn asks
+    for a model the account does not have.
+    """
+    if not model_id or _listed(model_id, native_ids(profile)):
+        return None
+    return _own_elsewhere(model_id, profile)
+
+
+def client_model(client: Any) -> str:
+    """The model a new ACP client starts on: its own, unless another profile serves it.
+
+    Read where the client is built, before its settings seed and its startup model
+    are written, so the id never reaches Claude Code. ``auto`` then leaves the
+    session on its config directory's own default. Never raises.
+    """
+    model = getattr(client, "_model", "") or ""
+    try:
+        from kiro_crew.agent_sdk.backends import ACP_BACKEND_CLAUDE
+
+        if model in ("", AUTO) or getattr(client, "backend", "") != ACP_BACKEND_CLAUDE:
+            return model
+        profile = owner_profile(client)
+        owner = foreign_to(model, profile)
+    except Exception:  # noqa: BLE001 - keep the model the caller asked for
+        logger.debug("local_ext.claude_profile_models: client model not scoped", exc_info=True)
+        return model
+    if owner is None:
+        return model
+    logger.info(
+        "local_ext.claude_profiles: model %s is the %s profile's, not the %s profile's; "
+        "session %s starts on its own default",
+        model,
+        owner,
+        profile or DEFAULT_PROFILE,
+        getattr(client, "_session_key", "") or "?",
+    )
+    return AUTO
+
+
+def foreign_to_session(model_id: str, namespace: str, advertised: Sequence[str] | None) -> bool:
+    """``model_scope.pin_applies``: a named profile's own model this session does not list.
+
+    For a session that is already running (a claimed warm process, a re-applied
+    pin), judged by the list the session itself advertised. Only a model that is
+    some named profile's own and not ``~/.claude``'s is refused, so an install
+    without profiles, and every id both profiles serve, is untouched. Never raises.
+    """
+    if namespace != NAMESPACE or not model_id or not advertised:
+        return False
+    try:
+        if _listed(model_id, advertised) or _listed(model_id, native_ids(None)):
+            return False
+        return any(_listed(model_id, native_ids(name)) for name in PROFILE_DIRS)
+    except Exception:  # noqa: BLE001 - upstream's own answer stands
+        logger.debug("local_ext.claude_profile_models: pin not scoped", exc_info=True)
+        return False
+
+
+def own_rows(
+    rows: Sequence[dict[str, str]], profile: str | None, namespace: str = NAMESPACE
+) -> list[dict[str, str]]:
+    """Picker *rows* of *profile* without the rows that echo another profile's model.
+
+    Dropped: a row named by its id (see :func:`native_ids`) whose model another
+    profile serves as its own. A model no profile claims stays (a custom model
+    the user set in this profile). Only Claude Code's rows are read. Never raises.
+    """
+    if namespace != NAMESPACE:
+        return list(rows)
+    try:
+        return [
+            row
+            for row in rows
+            if (row.get("display_name") or row.get("model_name")) != row.get("model_name")
+            or _own_elsewhere(row.get("model_name", ""), profile) is None
+        ]
+    except Exception:  # noqa: BLE001 - a display filter; never fail the list
+        logger.debug("local_ext.claude_profile_models: rows not filtered", exc_info=True)
+        return list(rows)
 
 
 # ── the picker's ``models_backend`` ──────────────────────────────────────────

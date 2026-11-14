@@ -390,6 +390,10 @@ class AcpClient:
         self._audit_source = audit_source
         self._channel_id = channel_id
         self._extra_env = extra_env or {}
+        # LOCAL PATCH (local_ext.claude_profiles): another Claude profile's model is not sent.
+        from kiro_crew.local_ext.claude_profile_models import client_model
+
+        self._model = client_model(self)
         # ``agent.env`` for the spawn in progress; see _agent_env_for_spawn.
         self._agent_env_snapshot: dict[str, str] | None = None
         # MCP gateway overlay: when set, the broker stubs in its rewritten specs

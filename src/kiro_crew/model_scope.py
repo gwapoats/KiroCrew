@@ -106,6 +106,12 @@ def pin_applies(
     """
     if not model_id or model_id == DEFAULT_MODEL or not namespace:
         return True
+    # LOCAL PATCH (local_ext.claude_profiles): a named Claude profile's own model,
+    # absent from this session's list, is not this session's to run.
+    from kiro_crew.local_ext.claude_profile_models import foreign_to_session
+
+    if foreign_to_session(model_id, namespace, advertised):
+        return False
     if model_registry.namespace_vocabulary(model_id, namespace, advertised):
         # The id is this harness's own. Whether the ACCOUNT may run it is a
         # separate question, owned by the entitlement guard downstream -- routing
