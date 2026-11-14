@@ -195,3 +195,181 @@ class TestProfileModelsField:
         monkeypatch.setattr(m, "slot_profile", boom)
         out = await m.profile_models_field(None, SimpleNamespace(key="k"), {}, config=object())
         assert out == {}
+
+
+# ── a model stays with the profile that serves it ────────────────────────────
+
+QWEN = "Qwen3.8-Flash-Next-oQ6e-mtp-1m"
+# What the two config directories advertised on the machine this was written for:
+# each list carries the other profile's own model as a row named by its id.
+LOCAL_ROWS = [
+    {"modelId": "default", "name": "Default (recommended)"},
+    {"modelId": QWEN, "name": f"{QWEN} ({QWEN})"},
+    {"modelId": "opus", "name": f"{QWEN} (opus)"},
+    {"modelId": "claude-fable-5-2", "name": "claude-fable-5-2"},
+    {"modelId": "claude-opus-4-8", "name": "Opus 4.8"},
+]
+CLOUD_ROWS = [
+    {"modelId": "default", "name": "Default (recommended)"},
+    {"modelId": QWEN, "name": QWEN},
+    {"modelId": "opus", "name": "Opus 5.5"},
+    {"modelId": "claude-fable-5-2", "name": "Fable 5.2"},
+    {"modelId": "claude-opus-4-8", "name": "Opus 4.8"},
+]
+
+
+def _row_ids(rows):
+    return [r["modelId"] for r in rows]
+
+
+@pytest.fixture
+def both_profiles(clean_cache):
+    for profile, rows in ((None, LOCAL_ROWS), ("cloud", CLOUD_ROWS)):
+        model_registry.refresh_advertised_models(
+            m.snapshot_key("claude_code", profile), _row_ids(rows), rows=rows
+        )
+
+
+def _client(model, profile=None, backend="claude", tmp_path=None):
+    from kiro_crew.acp.client import AcpClient
+
+    env = {CONFIG_DIR_ENV: config_dir(profile)} if profile else None
+    return AcpClient(work_dir=str(tmp_path), model=model, extra_env=env, acp_backend=backend)
+
+
+class TestNativeIds:
+    def test_a_row_named_by_its_id_is_not_the_profiles_own(self, both_profiles):
+        assert m.native_ids(None) == {"default", QWEN, "opus", "claude-opus-4-8"}
+        assert m.native_ids("cloud") == {"default", "opus", "claude-fable-5-2", "claude-opus-4-8"}
+
+    def test_empty_before_the_profile_advertised(self, clean_cache):
+        assert m.native_ids("cloud") == frozenset()
+
+    def test_the_fold_it_matches_ids_with_is_the_registrys(self):
+        fold = model_registry._normalize_advertised_key
+        assert fold("claude-opus-4.8") == fold("claude-opus-4-8")
+        assert fold("global.anthropic.claude-opus-5[1m]") == fold("claude-opus-5")
+        assert fold(QWEN) != fold("opus")
+
+
+class TestForeignTo:
+    def test_the_other_profiles_own_model(self, both_profiles):
+        assert m.foreign_to(QWEN, "cloud") == "default"
+        assert m.foreign_to("claude-fable-5-2", None) == "cloud"
+
+    def test_a_model_both_serve_is_nobodys_to_refuse(self, both_profiles):
+        assert m.foreign_to("opus", "cloud") is None
+        assert m.foreign_to("opus", None) is None
+        assert m.foreign_to("claude-opus-4.8", None) is None  # another spelling of its own id
+
+    def test_a_model_no_profile_claims(self, both_profiles):
+        assert m.foreign_to("claude-opus-5-5", "cloud") is None
+
+    def test_a_profile_with_no_list_yet_does_not_take_the_others_model(self, clean_cache):
+        model_registry.refresh_advertised_models(
+            m.snapshot_key("claude_code", None), _row_ids(LOCAL_ROWS), rows=LOCAL_ROWS
+        )
+        assert m.foreign_to(QWEN, "cloud") == "default"
+        assert m.foreign_to("claude-opus-5-5", "cloud") is None  # nobody's: sent as asked
+        assert m.foreign_to(QWEN, None) is None
+
+    def test_inert_while_no_other_profile_has_a_list(self, clean_cache):
+        model_registry.refresh_advertised_models(
+            m.snapshot_key("claude_code", None), _row_ids(LOCAL_ROWS), rows=LOCAL_ROWS
+        )
+        assert m.foreign_to("claude-fable-5-2", None) is None
+        assert m.foreign_to("anything", None) is None
+
+
+class TestClientModel:
+    def test_auto_is_the_config_default(self):
+        from kiro_crew.config.sections import DEFAULT_MODEL
+
+        assert m.AUTO == DEFAULT_MODEL
+
+    def test_a_cloud_session_is_not_started_on_the_local_model(self, both_profiles, tmp_path):
+        assert _client(QWEN, "cloud", tmp_path=tmp_path)._model == m.AUTO
+
+    def test_a_local_session_is_not_started_on_a_cloud_only_model(self, both_profiles, tmp_path):
+        assert _client("claude-fable-5-2", tmp_path=tmp_path)._model == m.AUTO
+
+    @pytest.mark.parametrize(
+        "model, profile",
+        [(QWEN, None), ("opus", "cloud"), ("opus", None), ("claude-fable-5-2", "cloud")],
+    )
+    def test_its_own_model_is_kept(self, both_profiles, tmp_path, model, profile):
+        assert _client(model, profile, tmp_path=tmp_path)._model == model
+
+    def test_another_harness_is_left_alone(self, both_profiles, tmp_path):
+        assert _client("claude-fable-5-2", backend="codex", tmp_path=tmp_path)._model == (
+            "claude-fable-5-2"
+        )
+
+    def test_inert_without_a_profile_list(self, clean_cache, tmp_path):
+        assert _client(QWEN, "cloud", tmp_path=tmp_path)._model == QWEN
+        assert _client("claude-fable-5-2", tmp_path=tmp_path)._model == "claude-fable-5-2"
+
+    def test_the_first_session_of_a_profile_is_not_started_on_the_local_model(
+        self, clean_cache, tmp_path
+    ):
+        model_registry.refresh_advertised_models(
+            m.snapshot_key("claude_code", None), _row_ids(LOCAL_ROWS), rows=LOCAL_ROWS
+        )
+        assert _client(QWEN, "cloud", tmp_path=tmp_path)._model == m.AUTO
+
+    def test_a_failure_keeps_the_model(self, both_profiles, tmp_path, monkeypatch):
+        def boom(*_a):
+            raise RuntimeError("x")
+
+        monkeypatch.setattr(m, "foreign_to", boom)
+        assert _client(QWEN, "cloud", tmp_path=tmp_path)._model == QWEN
+
+
+class TestPinAppliesToARunningSession:
+    """``model_scope.pin_applies`` with the session's own list (a claimed warm process)."""
+
+    LOCAL_LIST = ["default", QWEN, "opus", "claude-opus-4-8"]
+
+    def test_a_cloud_only_model_is_not_applied_to_a_local_session(self, both_profiles):
+        from kiro_crew import model_scope
+
+        assert not model_scope.pin_applies(
+            "claude-fable-5-2", "claude_code", advertised=self.LOCAL_LIST
+        )
+
+    @pytest.mark.parametrize("model", ["opus", QWEN, "claude-opus-4.8", "claude-opus-5-5"])
+    def test_other_models_get_upstreams_answer(self, both_profiles, model):
+        assert not m.foreign_to_session(model, "claude_code", self.LOCAL_LIST)
+
+    def test_untouched_without_a_named_profiles_list(self, clean_cache):
+        assert not m.foreign_to_session("claude-fable-5-2", "claude_code", self.LOCAL_LIST)
+
+    def test_untouched_without_the_sessions_list_or_on_another_harness(self, both_profiles):
+        assert not m.foreign_to_session("claude-fable-5-2", "claude_code", None)
+        assert not m.foreign_to_session("claude-fable-5-2", "codex", self.LOCAL_LIST)
+
+
+class TestPickerLeavesOutTheOtherProfilesModel:
+    def test_a_live_cloud_session_that_echoes_the_local_model(self, both_profiles):
+        req = _request(_provider(CLOUD_ROWS, "cloud"))
+        rows = _advertised_cc_models(req, "claude_code", profile="cloud")
+        assert _ids(rows) == ["default", "opus", "claude-fable-5-2", "claude-opus-4-8"]
+
+    def test_a_live_local_session_that_echoes_a_cloud_model(self, both_profiles):
+        rows = _advertised_cc_models(_request(_provider(LOCAL_ROWS)), "claude_code")
+        assert _ids(rows) == ["default", QWEN, "opus", "claude-opus-4-8"]
+
+    def test_the_cold_snapshot_too(self, both_profiles):
+        rows = _advertised_cc_models(_request(), "claude_code", profile="cloud")
+        assert QWEN not in _ids(rows) and "claude-fable-5-2" in _ids(rows)
+
+    def test_a_custom_model_no_profile_claims_stays(self, both_profiles):
+        custom = [*CLOUD_ROWS, {"modelId": "claude-opus-5-5", "name": "claude-opus-5-5"}]
+        rows = _advertised_cc_models(
+            _request(_provider(custom, "cloud")), "claude_code", profile="cloud"
+        )
+        assert "claude-opus-5-5" in _ids(rows) and QWEN not in _ids(rows)
+
+    def test_other_namespaces_are_not_read(self, both_profiles):
+        rows = [{"model_name": QWEN, "display_name": QWEN}]
+        assert m.own_rows(rows, "cloud", "codex") == rows

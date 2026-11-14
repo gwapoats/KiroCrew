@@ -620,6 +620,7 @@ def _advertised_cc_models(
         except Exception:
             continue
         rows = model_registry.live_advertised_model_rows(advertised) if advertised else []
+        rows = _lx_models.own_rows(rows, profile, namespace)  # LOCAL PATCH
         if rows:
             return rows
     snapshot = _lx_models.snapshot_rows(namespace, profile)
