@@ -1451,7 +1451,10 @@ async def api_models(request: web.Request) -> web.Response:
     if backend == ACP_BACKEND_CLAUDE:
         return web.json_response(
             _cc_models(
-                request, configured_default=_scoped_default(cfg, backend), profile=lx_profile
+                request,
+                configured_default=_scoped_default(cfg, backend),
+                # Named only when one was asked for: without it the call is upstream's.
+                **({"profile": lx_profile} if lx_profile else {}),
             )
         )
     if capabilities_for(backend).resolves_model_from_advertised_list or (
