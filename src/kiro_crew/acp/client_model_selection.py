@@ -337,6 +337,16 @@ def _capture_available_models(self: AcpClient, session_resp: dict) -> None:
                 rows=self._available_models,
                 confirm_shrink=True,
             )
+            # LOCAL PATCH (local_ext.claude_profiles): also file it under its profile.
+            from kiro_crew.local_ext.claude_profile_models import record_snapshot
+
+            if record_snapshot(
+                self,
+                self._model_registry_namespace,
+                self._advertised_model_ids(),
+                self._available_models,
+            ):
+                self._advertised_models_changed = True
 
 
 async def _persist_advertised_models_if_changed(self: AcpClient) -> None:

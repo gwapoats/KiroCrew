@@ -867,6 +867,11 @@ def _feed_advertised_model_cache(self: AcpSessionHandle) -> None:
         model_registry_namespace(backend), ids, rows=self._available_models, confirm_shrink=True
     ):
         self._advertised_models_changed = True
+    # LOCAL PATCH (local_ext.claude_profiles): also file it under its profile.
+    from kiro_crew.local_ext.claude_profile_models import record_snapshot
+
+    if record_snapshot(self, model_registry_namespace(backend), ids, self._available_models):
+        self._advertised_models_changed = True
 
 
 async def _persist_advertised_models_if_changed(self: AcpSessionHandle) -> None:
