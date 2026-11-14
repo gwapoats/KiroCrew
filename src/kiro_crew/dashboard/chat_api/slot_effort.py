@@ -85,6 +85,8 @@ async def api_chat_slot_selection_capabilities(request: web.Request) -> web.Resp
     An absent session is unknown, not unsupported. The composer can preserve its
     cold-start behavior until the first ACP session has advertised its options.
     """
+    from kiro_crew.local_ext.claude_profile_models import profile_models_field  # LOCAL PATCH
+
     state: DashboardState = request.app["state"]
     name = request.match_info["slot"]
     slot = state._slots.get(name)
@@ -132,7 +134,9 @@ async def api_chat_slot_selection_capabilities(request: web.Request) -> web.Resp
                 # The harness a new session would get: the Context panel names it.
                 "backend": backend,
                 "model_effort_pair_ids": backend in ACP_BACKENDS_MODEL_EFFORT_PAIR_IDS,
-                **await _own_models_field(backend, config),
+                **await profile_models_field(
+                    state, slot, await _own_models_field(backend, config), config
+                ),
                 **harness_effort(
                     state,
                     backend,
@@ -174,7 +178,7 @@ async def api_chat_slot_selection_capabilities(request: web.Request) -> web.Resp
             "effort_supported": supported and bool(levels),
             "effort_levels": levels,
             "model_effort_pair_ids": backend in ACP_BACKENDS_MODEL_EFFORT_PAIR_IDS,
-            **await _own_models_field(backend),
+            **await profile_models_field(state, slot, await _own_models_field(backend)),
         }
     )
 

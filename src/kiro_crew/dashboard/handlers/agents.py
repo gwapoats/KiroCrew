@@ -561,7 +561,9 @@ def _normalize_model_key(name: str) -> str:
     return string_fold
 
 
-def _advertised_cc_models(request: web.Request, namespace: str) -> list[dict]:
+def _advertised_cc_models(
+    request: web.Request, namespace: str, *, profile: str | None = None
+) -> list[dict]:
     """Map a live provider's advertised models to the API shape, per namespace.
 
     ``model_name`` is the advertised id verbatim: it is the wire value sent back
@@ -589,13 +591,20 @@ def _advertised_cc_models(request: web.Request, namespace: str) -> list[dict]:
     Newest matching session first, like :func:`_entitled_kiro_models`: forward
     order is creation order, so the most recently started session carries the most
     recent snapshot of what the account is served.
+
+    LOCAL PATCH (local_ext.claude_profiles): only sessions on *profile* answer
+    (``None`` = ``~/.claude``), and its own snapshot leads the cold fallback.
     """
+    from kiro_crew.local_ext import claude_profile_models as _lx_models
+
     try:
         state: DashboardState = request.app["state"]
         providers = state.sessions.active_providers()
     except (KeyError, AttributeError):
         providers = []
     for provider in reversed(providers):
+        if not _lx_models.matches(provider, profile):
+            continue
         # Read each field straight off ``capabilities_of(provider)``: binding it to a
         # local would be a second spelling of the question, which the one-spelling
         # ratchet in test_agent_sdk_capabilities.py exists to keep greppable.
@@ -613,13 +622,16 @@ def _advertised_cc_models(request: web.Request, namespace: str) -> list[dict]:
         rows = model_registry.live_advertised_model_rows(advertised) if advertised else []
         if rows:
             return rows
+    snapshot = _lx_models.snapshot_rows(namespace, profile)
     return [
         {
             "model_name": r["model_name"],
             "display_name": r.get("display_name", "") or r["model_name"],
             "description": r.get("description", ""),
         }
-        for r in model_registry.advertised_model_rows(namespace)
+        for r in (
+            snapshot if snapshot is not None else model_registry.advertised_model_rows(namespace)
+        )
     ]
 
 
@@ -764,7 +776,9 @@ async def _entitled_kiro_models(request: web.Request, models: list[dict]) -> lis
     return kept
 
 
-def _cc_models(request: web.Request, configured_default: str = "") -> list[dict]:
+def _cc_models(
+    request: web.Request, configured_default: str = "", profile: str | None = None
+) -> list[dict]:
     """Assemble the CC model dropdown, scoped to what the account can actually use.
 
     The live backend's advertised set is AUTHORITATIVE when present. It is the
@@ -792,7 +806,7 @@ def _cc_models(request: web.Request, configured_default: str = "") -> list[dict]
     ``default: true`` flag sorts the current flagship to the top, which would
     present a specific paid model as the default in the picker.
     """
-    advertised = _advertised_cc_models(request, "claude_code")
+    advertised = _advertised_cc_models(request, "claude_code", profile=profile)
     registry_rows = model_registry.display_list("claude_code")
 
     if advertised:
@@ -1409,7 +1423,11 @@ async def api_models(request: web.Request) -> web.Response:
     cfg = await asyncio.to_thread(KiroCrewConfig.load)
     from kiro_crew.crewmate_harness import models_route  # ``?backend=``: the mate picker's list
 
-    route = await asyncio.to_thread(models_route, cfg, request.query)
+    # LOCAL PATCH (local_ext.claude_profiles): ``backend=claude@cloud`` is that profile's list.
+    from kiro_crew.local_ext.claude_profile_models import query_without_profile
+
+    query, lx_profile = query_without_profile(request.query)
+    route = await asyncio.to_thread(models_route, cfg, query)
     if route is None:
         return web.json_response(
             {"error": "backend is not a selectable harness", "code": "invalid_acp_backend"},
@@ -1418,7 +1436,9 @@ async def api_models(request: web.Request) -> web.Response:
     backend, bundle_route = route
     if backend == ACP_BACKEND_CLAUDE:
         return web.json_response(
-            _cc_models(request, configured_default=_scoped_default(cfg, backend))
+            _cc_models(
+                request, configured_default=_scoped_default(cfg, backend), profile=lx_profile
+            )
         )
     if capabilities_for(backend).resolves_model_from_advertised_list or (
         backend in ACP_BACKENDS_MODEL_AT_LAUNCH
