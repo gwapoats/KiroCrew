@@ -843,8 +843,8 @@ async def _eager_spawn(
             # factory's own selection for this key, and the prefetch allocates
             # with no channel identity.
             from kiro_crew.crewmate_harness import crewmate_backend_pin
-            from kiro_crew.members import session_backend_pick
             from kiro_crew.local_ext.chat_backends import blocks_prewarm  # LOCAL PATCH
+            from kiro_crew.members import session_backend_pick
 
             if await blocks_prewarm(state, slot, session_key, cfg, bindings):
                 return

@@ -310,6 +310,24 @@ class TestTurnRoute:
         }
 
     @pytest.mark.asyncio
+    async def test_explicit_claude_backend_still_uses_the_profile(self, signed_in, armed):
+        state = SimpleNamespace(sessions=_Sessions())
+        cfg = _cfg({"anthropic": "cloud"}, routes={"anthropic": "codex"})
+        got = await cb.turn_route(
+            state, _slot(backend="claude"), KEY, cfg, "anthropic", _template_exec()
+        )
+        assert got.allocation == {"extra_env": {"CLAUDE_CONFIG_DIR": str(signed_in)}}
+
+    @pytest.mark.asyncio
+    async def test_explicit_other_backend_cannot_drop_the_profile(self, signed_in, armed):
+        state = SimpleNamespace(sessions=_Sessions())
+        cfg = _cfg({"anthropic": "cloud"}, routes={"anthropic": "claude"})
+        with pytest.raises(cp.ClaudeProfileUnavailable):
+            await cb.turn_route(
+                state, _slot(backend="codex"), KEY, cfg, "anthropic", _template_exec()
+            )
+
+    @pytest.mark.asyncio
     async def test_profile_on_another_harness_raises_before_any_claim(self, signed_in, armed):
         state = SimpleNamespace(sessions=_Sessions(_provider("claude")))
         cfg = _cfg({"anthropic": "cloud"}, routes={"anthropic": "codex"})
@@ -419,9 +437,10 @@ class TestPrewarm:
         return SimpleNamespace(execution_context=None, selection_kind="template", kiro_agent=agent)
 
     @pytest.mark.asyncio
-    async def test_profiled_chat_is_not_prewarmed(self):
+    @pytest.mark.parametrize("backend", ["", "claude"])
+    async def test_profiled_chat_is_not_prewarmed(self, backend):
         assert await cb.blocks_prewarm(
-            None, _slot(), KEY, _cfg({"anthropic": "cloud"}), self._bindings()
+            None, _slot(backend=backend), KEY, _cfg({"anthropic": "cloud"}), self._bindings()
         )
 
     @pytest.mark.asyncio

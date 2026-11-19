@@ -77,6 +77,8 @@ def configured_backend_for_session(
 
     # A session created on a harness reads as that harness before it starts.
     pick = session_backend_pick(session_key)
+    if pick is None:
+        pick = backend_override
     return select_provider_backend(
         session_key,
         config.agent.member_acp_backend,

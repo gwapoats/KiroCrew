@@ -158,8 +158,11 @@ async def _inherited_default_model(
         session_key=session_key,
         # The slot's created-on harness, as the allocation passes it: the
         # default is resolved for that harness, not the configured one.
-        backend_override=backend_override
-        or _slot_backend_allocation_kwargs(slot).get("backend_override"),
+        backend_override=(
+            _slot_backend_allocation_kwargs(slot).get("backend_override")
+            if backend_override is None
+            else backend_override
+        ),
     )
     return resolved or ""
 

@@ -147,15 +147,12 @@ def default_backend(cfg: Any, session_key: str) -> str:
 
 def slot_is_routable(state: Any, slot: Any, session_key: str) -> bool:
     """Whether *slot* is an ordinary dashboard chat (in-memory checks only)."""
-    from kiro_crew.agent_sdk.backends import backend_from_stored
     from kiro_crew.members import (
         DM_SLOT_MODE,
         is_crewmate_worker_session,
         is_member_session_key,
     )
 
-    if isinstance(backend_from_stored(getattr(slot, "backend", "") or None), str):
-        return False
     if is_member_session_key(session_key) or is_crewmate_worker_session(session_key):
         return False
     if getattr(slot, "mode", "") == DM_SLOT_MODE:
@@ -197,6 +194,13 @@ async def _runs_remotely(session_key: str) -> bool:
 
 async def _routable(state: Any, slot: Any, session_key: str) -> bool:
     return slot_is_routable(state, slot, session_key) and not await _runs_remotely(session_key)
+
+
+def _explicit_slot_backend(slot: Any) -> str | None:
+    from kiro_crew.agent_sdk.backends import backend_from_stored, resolve_selected_backend
+
+    pick = backend_from_stored(getattr(slot, "backend", "") or None)
+    return resolve_selected_backend(pick) if isinstance(pick, str) else None
 
 
 # ── the live session ─────────────────────────────────────────────────────────
@@ -321,9 +325,12 @@ async def turn_route(
     ):
         return TurnKwargs()
     template = agent or getattr(slot, "agent", "") or None
-    route = route_for_template(cfg, template)
-    default = default_backend(cfg, session_key)
     profile = profile_for_template(cfg, template)
+    pinned = _explicit_slot_backend(slot)
+    if pinned is not None and profile is None:
+        return TurnKwargs()
+    route = route_for_template(cfg, template) if pinned is None else None
+    default = default_backend(cfg, session_key) if pinned is None else pinned
     env: dict[str, str] | None = None
     if profile is not None:
         await ensure_startable(cfg, template or "", profile, default if route is None else route)
@@ -358,8 +365,8 @@ async def blocks_prewarm(state: Any, slot: Any, session_key: str, cfg: Any, bind
         return False
     template = getattr(bindings, "kiro_agent", "") or slot.agent
     try:
-        route = route_for_template(cfg, template)
         profile = profile_for_template(cfg, template)
+        route = route_for_template(cfg, template) if _explicit_slot_backend(slot) is None else None
     except (ChatBackendUnavailable, ClaudeProfileUnavailable):
         return True
     blocked = profile is not None or (
@@ -404,6 +411,8 @@ async def slot_backend_override(cfg: Any, slot: Any, session_key: str) -> str | 
     callers already answer as they answer an unstartable Bot pin.
     """
     if cfg is None or not agent_routes(cfg) or not await _routable(None, slot, session_key):
+        return None
+    if _explicit_slot_backend(slot) is not None:
         return None
     return await asyncio.to_thread(_cold_slot_route, cfg, slot, session_key)
 
