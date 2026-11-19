@@ -194,10 +194,10 @@ class TestRequest:
         assert seen["filename"] == "recording.ogg"
 
     def test_transcribe_audio_dispatches_and_redacts(self, tmp_path, no_key) -> None:
-        leaked = "AKIAIOSFODNN7EXAMPLE"
+        leaked = "X" + "0123456789abcdef" * 2 + "0123456"
         clip = _clip(tmp_path)
         out = _serve(
-            _recorder({}, payload={"text": f"my key is {leaked}"}),
+            _recorder({}, payload={"text": f"aws_secret_access_key = {leaked}"}),
             lambda url: transcribe.transcribe_audio(clip, _cfg(url)),
         )
         assert out and leaked not in out

@@ -209,7 +209,11 @@ class TestUpstreamSeams:
         root = Path(cp.__file__).resolve().parents[1]
         for rel, needle in [
             ("acp/claude_settings_sources.py", "walked_config_dir()"),
-            ("acp/client_claude_seed.py", "config_dir=session_config_dir(self)"),
+            ("acp/client_claude_seed.py", "config_dir = session_config_dir(self)"),
+            (
+                "acp/client_claude_seed.py",
+                "user_models_a_family_entry_covers(config_dir=config_dir)",
+            ),
             ("agent_sdk/claude_transcripts.py", "every_config_dir(delete_claude_session_files)"),
             ("agent_sdk/claude_transcripts.py", "first_existing_config_dir(claude_session_dir)"),
             ("agent_sdk/host_auth.py", "import CREDENTIAL_LEAVES as profile_leaves"),
